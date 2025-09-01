@@ -9,7 +9,7 @@ export const useAuth = () => useContext(AuthContext);
 // ข้อมูลผู้ใช้ (Mock data)
 const getUserDetails = (username) => {
   const userDetails = {
-    '65311187': { name: 'ชัยศิริ ไกยสิทธิ์', role: 'student', department: 'วิทยาการคอมพิวเตอร์' },
+    '65311187': { name: 'ชัยศิริ ไกยสิทธิ์', role: 'student', department: 'เทคโนโลยีสารสนเทศ' },
     '65313655': { name: 'ภราดร วรรณทิพย์', role: 'student', department: 'เทคโนโลยีสารสนเทศ' },
     'teacher1': { name: 'อาจารย์ตัวอย่าง', role: 'teacher' },
     'admin1': { name: 'ผู้ดูแลระบบ', role: 'admin' },

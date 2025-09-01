@@ -5,11 +5,13 @@ import { useAuth } from '../contexts/AuthContext';
 const LoginPage = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');  // สถานะสำหรับเก็บข้อความผิดพลาด
   const navigate = useNavigate();
   const { login } = useAuth();
 
   const handleLogin = (e) => {
     e.preventDefault();
+    setError(''); // ล้างข้อความผิดพลาดก่อนทำการตรวจสอบใหม่
 
     // Mock user data for testing
     const mockUsers = [
@@ -49,14 +51,26 @@ const LoginPage = () => {
         navigate('/home'); // Navigate to Home page for other users
       }
     } else {
-      console.log('Login failed! Check username or password.');
+      setError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'); // ตั้งค่าข้อความผิดพลาดเมื่อไม่พบข้อมูลผู้ใช้
     }
   };
 
   return (
-    <div style={{ backgroundColor: '#FFF8F0', minHeight: '100vh' }}>
+    <div style={{ backgroundColor: '#f4f7fa', minHeight: '100vh' }}>
       {/* Header */}
-      <div className="d-flex align-items-center p-2" style={{ height: '60px', backgroundColor: '#6f42c1' }}>
+      <div
+        className="d-flex align-items-center p-3"
+        style={{
+          position: 'fixed', // ทำให้ Top Bar อยู่ด้านบน
+          top: '0',
+          left: '0',
+          width: '100%',
+          height: '80px',
+          backgroundColor: '#6f42c1',
+          boxShadow: '0 4px 10px rgba(0, 0, 0, 0.1)',
+          zIndex: '999', // ทำให้ Top Bar อยู่ข้างบนสุด
+        }}
+      >
         <img
           src="/src/assets/csit.jpg"
           alt="Logo"
@@ -70,6 +84,13 @@ const LoginPage = () => {
         <div className="card shadow p-4" style={{ minWidth: '400px' }}>
           <div className="card-body text-center">
             <h1 className="display-6 mb-4">เข้าสู่ระบบ</h1>
+
+            {/* แสดงข้อความผิดพลาด */}
+            {error && (
+              <div className="alert alert-danger mb-4">
+                {error}
+              </div>
+            )}
 
             <form onSubmit={handleLogin} className="d-flex flex-column align-items-center gap-3">
               <input

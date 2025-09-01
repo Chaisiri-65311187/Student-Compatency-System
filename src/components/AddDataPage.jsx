@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom'; // เพิ่มการนำเข้า Link
-import { useAuth } from '../contexts/AuthContext'; // ใช้ useAuth เพื่อดึงข้อมูลผู้ใช้
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { useCompetency } from '../contexts/CompetencyContext'; // นำเข้า useCompetency
 import 'bootstrap/dist/css/bootstrap.min.css';
 
 const AddDataPage = () => {
-  const { user } = useAuth(); // ดึงข้อมูลผู้ใช้จาก AuthContext
+  const { user } = useAuth();
+  const { addCompetency } = useCompetency(); // ใช้ฟังก์ชัน addCompetency
   const [formData, setFormData] = useState({
     studentId: '',
     name: '',
@@ -21,28 +23,26 @@ const AddDataPage = () => {
     softSkill: '',
     projectFile: null,
     hardSkill: '',
-    transcriptFile: null, // ฟิลด์ใหม่สำหรับไฟล์ที่เกี่ยวข้องกับเกรด
-    activityFile: null, // ฟิลด์ใหม่สำหรับกิจกรรมเสริม
+    transcriptFile: null,
+    activityFile: null,
   });
 
-  const [isGradeEntered, setIsGradeEntered] = useState(false);  // ตรวจสอบว่าเกรดถูกกรอกหรือไม่
+  const [isGradeEntered, setIsGradeEntered] = useState(false);
   const navigate = useNavigate();
 
-  // ใช้ useEffect เพื่อดึงข้อมูลผู้ใช้ที่ล็อกอินแล้วและกรอกข้อมูลลงในฟอร์ม
   useEffect(() => {
+    // ตรวจสอบว่าเป็นผู้ใช้งานที่ล็อกอินหรือไม่ ถ้ายังไม่ได้ล็อกอินจะนำไปที่หน้า login
     if (!user) {
-      // ถ้าไม่มีข้อมูลผู้ใช้ (ยังไม่ได้ล็อกอิน) ให้ส่งไปหน้า login
       navigate('/login');
     } else {
-      // ถ้ามีข้อมูลผู้ใช้ ให้ตั้งค่า formData
       setFormData((prev) => ({
         ...prev,
-        studentId: user.username,      // กรอกข้อมูลรหัสนิสิต
-        name: user.fullName,           // กรอกข้อมูลชื่อ
-        department: user.department || '',  // กรอกข้อมูลสาขา
+        studentId: user.username,
+        name: user.fullName,
+        department: user.department || '',
       }));
     }
-  }, [user, navigate]); // ถ้า `user` เปลี่ยนแปลง, ให้ทำการอัพเดท `formData`
+  }, [user, navigate]); // เมื่อ `user` เปลี่ยนแปลงจะทำการอัปเดต `formData` หรือเปลี่ยนเส้นทางไปที่ login
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -51,7 +51,6 @@ const AddDataPage = () => {
       [name]: value,
     }));
 
-    // ตรวจสอบว่าเกรดถูกกรอกหรือไม่
     if (name === 'grade' && value) {
       setIsGradeEntered(true);
     } else if (name === 'grade' && !value) {
@@ -61,36 +60,41 @@ const AddDataPage = () => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // ทำการส่งข้อมูลหรือบันทึกข้อมูลที่กรอก
     console.log('ข้อมูลที่กรอก: ', formData);
-    // นำทางไปยังหน้าอื่นหลังจากส่งข้อมูล
+
+    // เรียกใช้ addCompetency เพื่อเพิ่มข้อมูลใน CompetencyContext
+    addCompetency(formData);
+
     navigate('/home');
   };
 
   const handleLogout = () => {
-    // ฟังก์ชันออกจากระบบ
     navigate('/login');
   };
 
-  // ฟังก์ชันสำหรับจัดการการอัปโหลดไฟล์โปรเจค
+  const handleTranscriptFileChange = (e) => {
+    setFormData((prev) => ({
+      ...prev,
+      transcriptFile: e.target.files[0],
+    }));
+  };
+
   const handleProjectFileChange = (e) => {
     setFormData((prev) => ({
       ...prev,
-      projectFile: e.target.files[0], // เก็บไฟล์ที่เลือก
+      projectFile: e.target.files[0],
     }));
   };
 
-  // ฟังก์ชันสำหรับจัดการการอัปโหลดไฟล์กิจกรรมเสริม
   const handleActivityFileChange = (e) => {
     setFormData((prev) => ({
       ...prev,
-      activityFile: e.target.files[0], // เก็บไฟล์ที่เลือก
+      activityFile: e.target.files[0],
     }));
   };
 
-  // หากไม่มีข้อมูลผู้ใช้ ให้แสดงข้อความ หรือหยุดการแสดงผล
   if (!user) {
-    return <div>กำลังโหลดข้อมูล...</div>; // หรือแสดงหน้าว่างจนกว่าจะโหลดข้อมูล
+    return <div>กำลังโหลดข้อมูล...</div>;
   }
 
   return (
@@ -105,7 +109,6 @@ const AddDataPage = () => {
         <h5 className="text-white fw-bold m-0" style={{ marginLeft: '10px' }}>CSIT Competency System</h5>
         <div className="ms-auto d-flex align-items-center">
           <span className="text-white me-3">{user ? `${user.username} ${user.fullName}` : 'ไม่พบผู้ใช้'}</span>
-          <Link to="/home" className="btn btn-light btn-sm me-2">ย้อนกลับ</Link>
           <button className="btn btn-light btn-sm" onClick={handleLogout}>ออกจากระบบ</button>
         </div>
       </div>
@@ -201,19 +204,6 @@ const AddDataPage = () => {
                 required
               />
             </div>
-
-            {/* ปุ่มสำหรับแนบไฟล์ Transcript เมื่อกรอกเกรดแล้ว */}
-            {isGradeEntered && (
-              <div className="col-12 mb-3">
-                <label className="form-label">แนบไฟล์ Transcript</label>
-                <input
-                  type="file"
-                  className="form-control"
-                  name="transcriptFile"
-                  onChange={handleTranscriptFileChange}
-                />
-              </div>
-            )}
 
             <div className="col-12 mb-3">
               <label className="form-label">Hard Skill</label>

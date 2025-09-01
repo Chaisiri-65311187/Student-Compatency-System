@@ -60,9 +60,9 @@ const HomePage = () => {
   };
 
   return (
-    <div style={{ backgroundColor: '#FFF8F0', minHeight: '100vh' }}>
+    <div style={{ backgroundColor: '#f4f7fa', minHeight: '100vh' }}>
       {/* Top Bar */}
-      <div className="d-flex align-items-center p-2" style={{ height: '60px', backgroundColor: '#6f42c1' }}>
+      <div className="d-flex align-items-center p-2" style={{ height: '80px', backgroundColor: '#6f42c1' }}>
         <img
           src="/src/assets/csit.jpg"
           alt="Logo"
@@ -82,13 +82,12 @@ const HomePage = () => {
           className="p-4"
           style={{
             width: '250px',
-            backgroundColor: '#343a40',
-            color: '#fff',
-            height: '100vh',
-            borderRight: '1px solid #ddd',
+            backgroundColor: '#ffffff',
+            boxShadow: '0 2px 5px rgba(0, 0, 0, 0.1)',
+            height: '100vh', // ให้ Sidebar มีความสูงเต็มหน้าจอ
           }}
         >
-          <h5 className="text-white">ตัวกรอง</h5>
+          <h5 className="mb-4">ตัวกรอง</h5>
 
           {/* ตัวกรองชั้นปี */}
           <h6>ชั้นปี</h6>
@@ -110,7 +109,7 @@ const HomePage = () => {
           </div>
 
           {/* ตัวกรองสาขา */}
-          <h6>สาขา</h6>
+          <h6 className="mt-4">สาขา</h6>
           <div>
             {['cs', 'it'].map((department) => (
               <div key={department} className="form-check">
