@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -12,7 +11,7 @@ const LoginPage = () => {
   const handleLogin = (e) => {
     e.preventDefault();
 
-    // ✅ mockUsers มี id + fullName ครบ
+    // Mock user data for testing
     const mockUsers = [
       {
         id: "65311187",
@@ -37,13 +36,18 @@ const LoginPage = () => {
       }
     ];
 
+    // Check if the username and password match any mock user
     const user = mockUsers.find(
       (u) => u.username === username && u.password === password
     );
 
     if (user) {
-      login(user); // บันทึก user เข้า Context
-      navigate('/home'); // ไปหน้า Home
+      login(user); // Save user to context
+      if (user.role === 'teacher') {
+        navigate('/student-info'); // Navigate to StudentInfoPage if user is a teacher
+      } else {
+        navigate('/home'); // Navigate to Home page for other users
+      }
     } else {
       console.log('Login failed! Check username or password.');
     }
@@ -52,16 +56,13 @@ const LoginPage = () => {
   return (
     <div style={{ backgroundColor: '#FFF8F0', minHeight: '100vh' }}>
       {/* Header */}
-      <div
-        className="d-flex align-items-center p-2"
-        style={{ height: '60px', backgroundColor: '#6f42c1' }}
-      >
+      <div className="d-flex align-items-center p-2" style={{ height: '60px', backgroundColor: '#6f42c1' }}>
         <img
           src="/src/assets/csit.jpg"
           alt="Logo"
           style={{ height: '50px', marginLeft: '10px', marginRight: '10px' }}
         />
-        <h5 className="text-white fw-bold m-0">CSIT Competency System</h5>
+        <h5 className="text-white fw-bold m-0" style={{ marginLeft: '10px' }}>CSIT Competency System</h5>
       </div>
 
       {/* Card login */}
@@ -70,10 +71,7 @@ const LoginPage = () => {
           <div className="card-body text-center">
             <h1 className="display-6 mb-4">เข้าสู่ระบบ</h1>
 
-            <form
-              onSubmit={handleLogin}
-              className="d-flex flex-column align-items-center gap-3"
-            >
+            <form onSubmit={handleLogin} className="d-flex flex-column align-items-center gap-3">
               <input
                 type="text"
                 value={username}
@@ -113,7 +111,6 @@ const LoginPage = () => {
         </div>
       </div>
     </div>
-    
   );
 };
 
