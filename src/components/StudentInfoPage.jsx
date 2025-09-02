@@ -3,6 +3,8 @@ import { useCompetency } from '../contexts/CompetencyContext'; // ใช้ Comp
 import { useAuth } from '../contexts/AuthContext'; // ใช้ AuthContext
 import { useNavigate } from 'react-router-dom';
 
+
+
 const StudentInfoPage = () => {
     const { user } = useAuth(); // ดึงข้อมูลผู้ใช้จาก AuthContext
     const { competencyData } = useCompetency(); // ดึงข้อมูลสมรรถนะนิสิตจาก CompetencyContext
@@ -31,16 +33,14 @@ const StudentInfoPage = () => {
     const handleFilterChange = (e) => {
         const { name, value, checked } = e.target;
         if (checked) {
-            // ถ้าทำการเลือก checkbox
             setFilters((prevFilters) => ({
                 ...prevFilters,
-                [name]: [...prevFilters[name], value], // เพิ่มค่าเข้าไปใน array
+                [name]: [...prevFilters[name], value],
             }));
         } else {
-            // ถ้า uncheck checkbox
             setFilters((prevFilters) => ({
                 ...prevFilters,
-                [name]: prevFilters[name].filter((item) => item !== value), // ลบค่าที่ถูกเลือก
+                [name]: prevFilters[name].filter((item) => item !== value),
             }));
         }
     };
@@ -48,7 +48,7 @@ const StudentInfoPage = () => {
     return (
         <div style={{ backgroundColor: '#f4f7fa', minHeight: '100vh' }}>
             {/* Top Bar */}
-            <div className="d-flex align-items-center p-3" style={{ height: '70px', backgroundColor: '#6f42c1' }}>
+            <div className="d-flex align-items-center p-2" style={{ height: '80px', backgroundColor: '#6f42c1' }}>
                 <img
                     src="/src/assets/csit.jpg"
                     alt="Logo"
@@ -64,7 +64,22 @@ const StudentInfoPage = () => {
             <div className="d-flex">
                 {/* Sidebar */}
                 <div className="p-4" style={{ width: '250px', backgroundColor: '#ffffff', boxShadow: '0 2px 5px rgba(0, 0, 0, 0.1)' }}>
-                    <h5 className="mb-4">ตัวกรอง</h5>
+                    <h5
+                        className="mb-4"
+                        style={{
+                            border: '1px solid #ccc',       // สีกรอบ
+                            padding: '10px 15px',           // ระยะห่างด้านใน
+                            borderRadius: '5px',            // มุมโค้ง
+                            backgroundColor: '#f9f9f9',     // พื้นหลังอ่อน ๆ
+                            textAlign: 'center',             // กึ่งกลางแนวนอน
+                            display: 'flex',                 // ใช้ flex
+                            alignItems: 'center',            // กึ่งกลางแนวตั้ง
+                            justifyContent: 'center',        // กึ่งกลางแนวนอน (สำหรับ flex)
+                            height: '50px'                   // ความสูงเพื่อให้จัดกลางแนวตั้งชัดเจน
+                        }}
+                    >
+                        ตัวกรอง
+                    </h5>
 
                     <div className="mb-4">
                         <h6>สาขา</h6>
@@ -116,30 +131,27 @@ const StudentInfoPage = () => {
 
                 {/* Main Content */}
                 <div className="container my-5" style={{ minHeight: 'calc(100vh - 70px)' }}>
+                    {/* หัวข้อและปุ่มสร้างประกาศ */}
                     <div
                         style={{
                             display: 'flex',
-                            justifyContent: 'center',  // จัดตำแหน่งแนวนอน
-                            alignItems: 'flex-start',  // จัดตำแหน่งให้เริ่มที่ด้านบน
-                            minHeight: '100vh',  // ให้มีความสูงเต็มหน้าจอ
-                            paddingTop: '10px',  // เพิ่มช่องว่างด้านบนเล็กน้อยเพื่อไม่ให้เนื้อหาติดขอบ
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: '20px',
                         }}
                     >
-                        <div
-                            style={{
-                                backgroundColor: 'white',
-                                padding: '20px',
-                                borderRadius: '10px',
-                                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)',
-                                width: '80%',  // ใช้ขนาดเต็มของ container
-                                maxWidth: '400px',  // ขนาดสูงสุดไม่เกิน 500px
-                            }}
-                        >
-                            <h2 className="text-center mb-4">ข้อมูลสมรรถนะของนิสิต</h2>
-                        </div>
+                        <h2 className="mb-0">ข้อมูลสมรรถนะของนิสิต</h2>
+                        {user?.role === 'teacher' && (
+                            <button
+                                className="btn btn-success"
+                                onClick={() => navigate('/create-announcement')}
+                            >
+                                สร้างประกาศรับสมัครนิสิต
+                            </button>
+                        )}
                     </div>
 
-                    {/* แสดงข้อมูลนิสิตในรูปแบบการ์ด */}
+                    {/* แสดงข้อมูลนิสิต */}
                     <div className="row g-4">
                         {filteredData.map((item, index) => (
                             <div key={index} className="col-md-4">
@@ -148,7 +160,12 @@ const StudentInfoPage = () => {
                                         <h5 className="card-title text-center">{item.studentId}</h5>
                                         <p><strong>ชื่อ:</strong> {item.name}</p>
                                         <p><strong>สาขา:</strong> {item.department}</p>
-                                        <p><strong>วิชาเลือก:</strong> {item.subject1}, {item.subject2}, {item.subject3}, {item.subject4}, {item.subject5}, {item.subject6}</p>
+                                        <p><strong>วิชาเลือก:</strong></p>
+                                        <ul>
+                                            {[item.subject1, item.subject2, item.subject3, item.subject4, item.subject5, item.subject6].map((subj, idx) => (
+                                                <li key={idx}>{subj}</li>
+                                            ))}
+                                        </ul>
                                         <p><strong>ชั้นปี:</strong> {item.year}</p>
                                         <p><strong>เกรด:</strong> {item.grade}</p>
                                         <p><strong>ทักษะ:</strong> {item.skill}</p>

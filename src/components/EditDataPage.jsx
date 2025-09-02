@@ -5,38 +5,11 @@ import { useCompetency } from '../contexts/CompetencyContext';
 import Swal from 'sweetalert2';
 import 'bootstrap/dist/css/bootstrap.min.css';
 
-export const electiveSubjects = [
-  { code: '254274', name: 'Python Programming' },
-  { code: '254384', name: 'Cloud Computing' },
-  { code: '254451', name: 'Software Engineering' },
-  { code: '254471', name: 'Modern Computer Languages' },
-  { code: '254475', name: 'Program Auditing' },
-  { code: '254483', name: 'Sensing and Actuation for Internet of Things' },
-  { code: '254484', name: 'Functional Programming' },
-  { code: '254486', name: 'Data Science' },
-  { code: '273353', name: 'Electronics Commerce' },
-  { code: '273362', name: 'Multimedia Application Development' },
-  { code: '273371', name: 'Information Retrieval' },
-  { code: '273372', name: 'Server Side Web Programming' },
-  { code: '273374', name: 'Java programming for information technology' },
-  { code: '273375', name: 'Fundamentals of Data Mining' },
-  { code: '273376', name: 'Programming with .Net Framework' },
-  { code: '273381', name: 'Computer Graphics and Animation' },
-  { code: '273383', name: 'Entrepreneurship in Computer Technology' },
-  { code: '273384', name: 'Knowledge Management' },
-  { code: '273386', name: 'Geographic Information Systems' },
-  { code: '273387', name: 'Mobile Application Development' },
-  { code: '273389', name: 'Game Design and Development' },
-  { code: '273453', name: 'Decision Support Systems' },
-  { code: '273481', name: 'Business Record and Logistics Management' },
-  { code: '273483', name: 'Enterprise Resource Planning' },
-  { code: '273487', name: 'Special Topics in Information Technology' },
-  { code: '273488', name: 'Digital Image Processing' },
-];
-
-const AddDataPage = () => {
+const EditDataPage = () => {
   const { user } = useAuth();
-  const { addCompetency } = useCompetency();
+  const { updateCompetency } = useCompetency(); // ยังไม่ดึงข้อมูลจริง
+  const navigate = useNavigate();
+
   const [formData, setFormData] = useState({
     studentId: '',
     name: '',
@@ -55,15 +28,12 @@ const AddDataPage = () => {
     activityFile: null,
   });
 
-
-
-  const navigate = useNavigate();
-
+  // ตั้งค่า user ใน formData ทันทีที่โหลด
   useEffect(() => {
     if (!user) {
       navigate('/login');
     } else {
-      setFormData((prev) => ({
+      setFormData(prev => ({
         ...prev,
         studentId: user.username,
         name: user.fullName,
@@ -74,39 +44,30 @@ const AddDataPage = () => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   const handleProjectFileChange = (e) => {
-    setFormData((prev) => ({
-      ...prev,
-      projectFile: e.target.files[0],
-    }));
+    setFormData(prev => ({ ...prev, projectFile: e.target.files[0] }));
   };
 
   const handleActivityFileChange = (e) => {
-    setFormData((prev) => ({
-      ...prev,
-      activityFile: e.target.files[0],
-    }));
+    setFormData(prev => ({ ...prev, activityFile: e.target.files[0] }));
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     Swal.fire({
-      title: "ยืนยันการส่งข้อมูล?",
-      text: "คุณต้องการส่งข้อมูลนี้หรือไม่",
+      title: "ยืนยันการอัปเดตข้อมูล?",
+      text: "คุณต้องการอัปเดตข้อมูลนี้หรือไม่",
       icon: "question",
       showCancelButton: true,
-      confirmButtonText: "ใช่, ส่งข้อมูล",
+      confirmButtonText: "ใช่, อัปเดตข้อมูล",
       cancelButtonText: "ยกเลิก",
     }).then((result) => {
       if (result.isConfirmed) {
-        addCompetency(formData);
-        Swal.fire("สำเร็จ!", "ส่งข้อมูลเรียบร้อยแล้ว", "success").then(() => {
+        updateCompetency(formData); // ส่ง formData
+        Swal.fire("สำเร็จ!", "อัปเดตข้อมูลเรียบร้อยแล้ว", "success").then(() => {
           navigate('/home');
           window.scrollTo(0, 0);
         });
@@ -116,33 +77,27 @@ const AddDataPage = () => {
 
   const handleCancel = () => {
     Swal.fire({
-      title: "ยกเลิกการกรอกข้อมูล?",
-      text: "ข้อมูลที่กรอกจะไม่ถูกบันทึก",
+      title: "ยกเลิกการแก้ไข?",
+      text: "ข้อมูลที่แก้ไขจะไม่ถูกบันทึก",
       icon: "warning",
       showCancelButton: true,
       confirmButtonText: "ใช่, ยกเลิก",
-      cancelButtonText: "กลับไปกรอกต่อ",
+      cancelButtonText: "กลับไปแก้ไขต่อ",
     }).then((result) => {
       if (result.isConfirmed) {
-        navigate('/home');  // ตรวจสอบว่าเส้นทางนี้ถูกต้องหรือไม่
+        navigate('/home');
         window.scrollTo(0, 0);
       }
     });
   };
 
-  if (!user) {
-    return <div>กำลังโหลดข้อมูล...</div>;
-  }
+  if (!user) return <div>กำลังโหลดข้อมูล...</div>;
 
   return (
     <div style={{ backgroundColor: '#f4f7fa', minHeight: '100vh' }}>
       {/* Top Bar */}
       <div className="d-flex align-items-center p-2" style={{ height: '60px', backgroundColor: '#6f42c1' }}>
-        <img
-          src="/src/assets/csit.jpg"
-          alt="Logo"
-          style={{ height: '50px', marginLeft: '10px', marginRight: '10px' }}
-        />
+        <img src="/src/assets/csit.jpg" alt="Logo" style={{ height: '50px', margin: '0 10px' }} />
         <h5 className="text-white fw-bold m-0" style={{ marginLeft: '10px' }}>CSIT Competency System</h5>
         <div className="ms-auto d-flex align-items-center">
           <span className="text-white me-3">{user ? `${user.username} ${user.fullName}` : 'ไม่พบผู้ใช้'}</span>
@@ -160,11 +115,11 @@ const AddDataPage = () => {
             boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)',
             width: '100%',
             maxWidth: '600px',
-            marginTop: '20px', // เพิ่มระยะห่างจาก Top Bar
+            marginTop: '20px',
             marginBottom: '20px',
           }}
         >
-          <h2 className="text-center mb-4">กรอกข้อมูลสมรรถนะของตนเอง</h2>
+          <h2 className="text-center mb-4">แก้ไขข้อมูลสมรรถนะของตนเอง</h2>
 
           <form onSubmit={handleSubmit}>
             <div className="row">
@@ -195,11 +150,7 @@ const AddDataPage = () => {
                         onChange={handleChange}
                       >
                         <option value="">เลือกวิชา {index + 1}</option>
-                        {electiveSubjects.map((subj) => (
-                          <option key={subj.code} value={subj.name}>
-                            {subj.name} ({subj.code})
-                          </option>
-                        ))}
+                        <option value={`วิชา ${index + 1}`}>วิชา {index + 1}</option>
                       </select>
                     </div>
                   ))}
@@ -235,18 +186,18 @@ const AddDataPage = () => {
 
               {/* Files */}
               <div className="col-12 mb-3">
-                <label className="form-label">ผลงาน</label>
+                <label className="form-label">ผลงาน (เลือกใหม่ถ้าต้องการอัปเดต)</label>
                 <input type="file" className="form-control" name="projectFile" onChange={handleProjectFileChange} />
               </div>
 
               <div className="col-12 mb-3">
-                <label className="form-label">กิจกรรมเสริม</label>
+                <label className="form-label">กิจกรรมเสริม (เลือกใหม่ถ้าต้องการอัปเดต)</label>
                 <input type="file" className="form-control" name="activityFile" onChange={handleActivityFileChange} />
               </div>
 
               {/* Buttons */}
               <div className="d-flex justify-content-between mt-4">
-                <button type="submit" className="btn btn-primary w-80">ส่งข้อมูล</button>
+                <button type="submit" className="btn btn-primary w-80">บันทึก</button>
                 <button type="button" className="btn btn-secondary w-60" onClick={handleCancel}>ยกเลิก</button>
               </div>
             </div>
@@ -257,4 +208,4 @@ const AddDataPage = () => {
   );
 };
 
-export default AddDataPage;
+export default EditDataPage;
