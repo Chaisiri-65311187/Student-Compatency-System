@@ -53,9 +53,8 @@ const AddDataPage = () => {
     softSkill: '',
     projectFile: null,
     activityFile: null,
+    profileImage: null, // ฟิลด์สำหรับรูปภาพ
   });
-
-
 
   const navigate = useNavigate();
 
@@ -78,6 +77,22 @@ const AddDataPage = () => {
       ...prev,
       [name]: value,
     }));
+  };
+
+  const handleProfileImageChange = (e) => {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+
+    reader.onloadend = () => {
+      setFormData((prev) => ({
+        ...prev,
+        profileImage: reader.result, // เก็บข้อมูลรูปภาพใน base64
+      }));
+    };
+
+    if (file) {
+      reader.readAsDataURL(file); // อ่านไฟล์รูปภาพและแปลงเป็น base64
+    }
   };
 
   const handleProjectFileChange = (e) => {
@@ -105,7 +120,7 @@ const AddDataPage = () => {
       cancelButtonText: "ยกเลิก",
     }).then((result) => {
       if (result.isConfirmed) {
-        addCompetency(formData);
+        addCompetency(formData); // เพิ่มข้อมูล
         Swal.fire("สำเร็จ!", "ส่งข้อมูลเรียบร้อยแล้ว", "success").then(() => {
           navigate('/home');
           window.scrollTo(0, 0);
@@ -124,7 +139,7 @@ const AddDataPage = () => {
       cancelButtonText: "กลับไปกรอกต่อ",
     }).then((result) => {
       if (result.isConfirmed) {
-        navigate('/home');  // ตรวจสอบว่าเส้นทางนี้ถูกต้องหรือไม่
+        navigate('/home'); // ตรวจสอบว่าเส้นทางนี้ถูกต้องหรือไม่
         window.scrollTo(0, 0);
       }
     });
@@ -160,7 +175,7 @@ const AddDataPage = () => {
             boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)',
             width: '100%',
             maxWidth: '600px',
-            marginTop: '20px', // เพิ่มระยะห่างจาก Top Bar
+            marginTop: '20px',
             marginBottom: '20px',
           }}
         >
@@ -168,6 +183,27 @@ const AddDataPage = () => {
 
           <form onSubmit={handleSubmit}>
             <div className="row">
+              {/* Profile Image */}
+              <div className="col-12 mb-3">
+                <label className="form-label">รูปภาพ</label>
+                <input
+                  type="file"
+                  className="form-control"
+                  name="profileImage"
+                  accept="image/*"
+                  onChange={handleProfileImageChange}
+                />
+              </div>
+              {formData.profileImage && (
+                <div className="col-12 text-center mb-3">
+                  <img
+                    src={formData.profileImage}
+                    alt="Profile"
+                    style={{ width: '150px', height: '150px', objectFit: 'cover', borderRadius: '50%' }}
+                  />
+                </div>
+              )}
+
               {/* Student Info */}
               <div className="col-12 mb-3">
                 <label className="form-label">รหัสนิสิต</label>
