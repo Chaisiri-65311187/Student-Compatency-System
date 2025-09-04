@@ -1,5 +1,4 @@
-// src/contexts/CompetencyContext.jsx
-// src/contexts/CompetencyContext.jsx
+
 import React, { createContext, useContext, useState } from "react";
 
 // สร้าง context สำหรับ Competency

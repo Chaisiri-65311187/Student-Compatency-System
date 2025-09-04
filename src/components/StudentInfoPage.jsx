@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCompetency } from '../contexts/CompetencyContext';
+import { useAnnouncements } from '../contexts/AnnouncementsContext';
 import { useNavigate } from 'react-router-dom';
 
 const StudentInfoPage = () => {
   const { user } = useAuth(); // ดึงข้อมูลผู้ใช้จาก AuthContext
   const { competencyData } = useCompetency(); // ดึงข้อมูลสมรรถนะนิสิตจาก CompetencyContext
+  const { announcements } = useAnnouncements();
   const navigate = useNavigate();
 
   // กรองข้อมูลด้วยตัวกรอง
@@ -121,7 +123,26 @@ const StudentInfoPage = () => {
 
         {/* Main Content */}
         <div className="container my-5" style={{ minHeight: 'calc(100vh - 70px)' }}>
-          <h2 className="text-center mb-4">ข้อมูลสมรรถนะของนิสิต</h2>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '20px',
+            }}
+          >
+            <h2 className="mb-0">ประกาศรับสมัครจากอาจารย์</h2>
+
+            <div className="d-flex gap-2">
+              <button
+                className="btn btn-success"
+                onClick={() => navigate('/create-announcement')}
+              >
+                สร้างประกาศรับสมัคร
+              </button>
+
+            </div>
+          </div>
 
           {/* แสดงข้อมูลนิสิตในรูปแบบการ์ด */}
           <div className="row g-4">
