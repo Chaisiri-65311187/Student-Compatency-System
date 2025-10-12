@@ -1,73 +1,90 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+// src/components/WelcomePage.jsx
+import React from "react";
+import { Link } from "react-router-dom";
 
 const WelcomePage = () => {
   return (
-    <div style={{ backgroundColor: '#f4f7fa', minHeight: '100vh' }}>
+    <div className="min-vh-100" style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}>
       {/* Top Bar */}
       <div
-        className="d-flex align-items-center p-3"
+        className="d-flex align-items-center px-3"
         style={{
-          position: 'fixed', // ทำให้ Top Bar อยู่ด้านบน
-          top: '0',
-          left: '0',
-          width: '100%',
-          height: '80px',
-          backgroundColor: '#6f42c1',
-          boxShadow: '0 4px 10px rgba(0, 0, 0, 0.1)',
-          zIndex: '999', // ทำให้ Top Bar อยู่ข้างบนสุด
+          position: "sticky",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: 72,
+          background: "linear-gradient(90deg, #6f42c1, #8e5cff)",
+          boxShadow: "0 4px 14px rgba(111,66,193,.22)",
+          zIndex: 10,
         }}
       >
         <img
           src="/src/assets/csit.jpg"
-          alt="Logo"
-          style={{ height: '50px', marginLeft: '10px', marginRight: '10px' }}
+          alt="CSIT Logo"
+          className="rounded-3"
+          style={{ height: 40, width: 40, objectFit: "cover" }}
         />
-        <h5 className="text-white fw-bold m-0" style={{ marginLeft: '10px' }}>CSIT Competency System</h5>
+        <h5 className="text-white fw-semibold m-0 ms-3">CSIT Competency System</h5>
       </div>
 
-      {/* เนื้อหากลางหน้า */}
-      <div
-        className="d-flex flex-column justify-content-center align-items-center"
-        style={{
-          paddingTop: '120px', // เพิ่มพื้นที่ด้านบนเพื่อไม่ให้เนื้อหาถูกปิดด้วย Top Bar
-          minHeight: 'calc(100vh - 80px)',
-          textAlign: 'center',
-        }}
-      >
-        <div
-          style={{
-            backgroundColor: 'white',
-            padding: '40px',
-            borderRadius: '10px',
-            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)',
-            width: '100%',
-            maxWidth: '500px',
-          }}
-        >
-          <h1 className="display-4 fw-bold mb-3" style={{ fontSize: '3rem' }}>
-            ยินดีต้อนรับ
-          </h1>
-          <p className="text-secondary fs-5 mb-5">
-            ระบบสมรรถนะของนิสิตสาขาวิทยาการคอมพิวเตอร์ และ <br /> เทคโนโลยีสารสนเทศ
-          </p>
-          <Link to="/login">
-            <button
-              className="btn btn-dark btn-lg px-4"
-              style={{
-                fontSize: '1.25rem',
-                padding: '15px 30px',
-                borderRadius: '25px',
-                transition: 'all 0.3s ease-in-out',
-              }}
-              onMouseOver={(e) => (e.target.style.backgroundColor = '#5a2d9b')}
-              onMouseOut={(e) => (e.target.style.backgroundColor = '#6f42c1')}
+      {/* Hero */}
+      <div className="container-xxl">
+        <div className="row justify-content-center">
+          <div className="col-12 col-md-9 col-lg-7">
+            <div
+              className="card border-0 shadow-sm rounded-4 mx-auto my-5"
+              style={{ backdropFilter: "blur(6px)", background: "rgba(255,255,255,.95)" }}
             >
-              เข้าสู่ระบบ
-            </button>
-          </Link>
+              <div className="card-body text-center p-4 p-lg-5">
+                <h1 className="fw-bold mb-3" style={{ fontSize: "2.25rem" }}>
+                  ยินดีต้อนรับ
+                </h1>
+                <p className="text-secondary mb-4">
+                  ระบบสมรรถนะของนิสิตสาขา <strong>วิทยาการคอมพิวเตอร์</strong> และ <strong>เทคโนโลยีสารสนเทศ</strong>
+                </p>
+
+                <div className="d-grid gap-3 mt-2">
+                  <Link to="/login" className="text-decoration-none">
+                    <button className="btn btn-primary btn-lg welcome-cta w-100 rounded-3">
+                      เข้าสู่ระบบ
+                    </button>
+                  </Link>
+
+                  {/* ถ้าอนาคตมีปุ่มอื่นก็เพิ่มได้ที่นี่
+                  <Link to="/about" className="text-decoration-none">
+                    <button className="btn btn-outline-secondary btn-lg w-100 rounded-3">เกี่ยวกับระบบ</button>
+                  </Link>
+                  */}
+                </div>
+
+                <div className="mt-4 small text-muted">
+                  หากพบปัญหาในการเข้าสู่ระบบ กรุณาติดต่อผู้ดูแลระบบภาควิชา
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* Local styles */}
+      <style>{`
+        .welcome-cta{
+          background: linear-gradient(135deg,#6f42c1,#8e5cff);
+          border: none;
+          box-shadow: 0 10px 24px rgba(111,66,193,.25);
+          transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+        }
+        .welcome-cta:hover{
+          transform: translateY(-1px);
+          box-shadow: 0 14px 30px rgba(111,66,193,.28);
+          opacity: .95;
+        }
+        .welcome-cta:active{
+          transform: translateY(0);
+          box-shadow: 0 8px 18px rgba(111,66,193,.22);
+        }
+      `}</style>
     </div>
   );
 };

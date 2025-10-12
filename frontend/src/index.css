@@ -18,6 +18,7 @@ a {
   color: #646cff;
   text-decoration: inherit;
 }
+
 a:hover {
   color: #535bf2;
 }
@@ -46,9 +47,11 @@ button {
   cursor: pointer;
   transition: border-color 0.25s;
 }
+
 button:hover {
   border-color: #646cff;
 }
+
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
@@ -59,10 +62,95 @@ button:focus-visible {
     color: #213547;
     background-color: #ffffff;
   }
+
   a:hover {
     color: #747bff;
   }
+
   button {
     background-color: #f9f9f9;
   }
 }
+
+/* ----- Global polish for HomePage ----- */
+:root {
+  --csit-purple: #6f42c1;
+}
+
+.hero-bar {
+  height: 88px;
+  background: linear-gradient(90deg, var(--csit-purple), #8e5cff);
+  position: sticky;
+  top: 0;
+  z-index: 1040;
+  box-shadow: 0 6px 20px rgba(111, 66, 193, .25);
+}
+
+.sticky-sidebar {
+  position: sticky;
+  top: 110px;
+  /* ใต้ hero-bar เล็กน้อย */
+  border-radius: 1rem;
+}
+
+.glass-card {
+  backdrop-filter: blur(6px);
+  transition: transform .15s ease, box-shadow .15s ease;
+
+  .chip {
+    padding: .35rem .75rem;
+  }
+
+  /* ให้โปร่งใสเพื่อไม่ให้เห็นกรอบเทา */
+  .ratio-21x9 {
+    aspect-ratio: 21 / 9;
+    width: 100%;
+    background: transparent;
+  }
+
+  /* ป้ายชั้นปีให้เด่น/ใหญ่ */
+  .year-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: .45rem .85rem;
+    -radius: 9999px;
+    font-weight: 700;
+    font-size: 0.95rem;
+    /* ลอง 1.05rem ถ้ายังอยากใหญ่ขึ้น */
+    letter-spacing: .2px;
+    color: #1f1147;
+    background: rgba(255, 255, 255, .95);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
+    border: 1px solid rgba(255, 255, 255, .6);
+  }
+}
+
+  .glass-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 30px rgba(28, 39, 49, .12) !important;
+  }
+
+  /* multi-line clamp */
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* nicer placeholder */
+  .placeholder-wave .placeholder {
+    border-radius: .5rem;
+  }
+
+  /* action chips */
+  .chip {
+    padding: .35rem .75rem;
+  }
+
+  /* ratio helper if Bootstrap <5.3 not has 21x9 */
+  .ratio-21x9 {
+    aspect-ratio: 21 / 9;
+    width: 100%;
+    background: #e9ecef;
+  }

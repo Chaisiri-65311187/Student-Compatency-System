@@ -1,59 +1,98 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
-import { useCompetency } from '../contexts/CompetencyContext';
-import Swal from 'sweetalert2';
-import 'bootstrap/dist/css/bootstrap.min.css';
+// src/components/EditDataPage.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
+import { useCompetency } from "../contexts/CompetencyContext";
+import Swal from "sweetalert2";
+import { electiveSubjects } from "./AddDataPage"; // ✅ ใช้รายการรายวิชาเดียวกับหน้า Add
 
 const EditDataPage = () => {
-  const { user } = useAuth();
-  const { updateCompetency } = useCompetency(); // ยังไม่ดึงข้อมูลจริง
+  const { user, logout } = useAuth();
+  const { updateCompetency } = useCompetency();
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
-    studentId: '',
-    name: '',
-    department: '',
-    subject1: '',
-    subject2: '',
-    subject3: '',
-    subject4: '',
-    subject5: '',
-    subject6: '',
-    year: '',
-    grade: '',
-    hardSkill: '',
-    softSkill: '',
+    studentId: "",
+    name: "",
+    department: "",
+    subject1: "",
+    subject2: "",
+    subject3: "",
+    subject4: "",
+    subject5: "",
+    subject6: "",
+    year: "",
+    grade: "",
+    hardSkill: "",
+    softSkill: "",
     projectFile: null,
     activityFile: null,
   });
 
-  // ตั้งค่า user ใน formData ทันทีที่โหลด
+  // โหลดข้อมูลเริ่มต้นจาก user (เดิมยังไม่ดึงข้อมูลจริงจาก backend)
   useEffect(() => {
     if (!user) {
-      navigate('/login');
+      navigate("/login");
     } else {
-      setFormData(prev => ({
+      setFormData((prev) => ({
         ...prev,
         studentId: user.username,
         name: user.fullName,
-        department: user.department || '',
+        department: user.department || "",
       }));
     }
   }, [user, navigate]);
 
+  // สร้างรายการวิชาที่เลือกไปแล้ว (ไว้ disable ตัวเลือกซ้ำ)
+  const selectedSubjects = useMemo(() => {
+    return [
+      formData.subject1,
+      formData.subject2,
+      formData.subject3,
+      formData.subject4,
+      formData.subject5,
+      formData.subject6,
+    ].filter(Boolean);
+  }, [formData]);
+
+  const isDuplicateSubject = (value, index) => {
+    if (!value) return false;
+    const arr = [
+      formData.subject1,
+      formData.subject2,
+      formData.subject3,
+      formData.subject4,
+      formData.subject5,
+      formData.subject6,
+    ];
+    return arr.some((v, i) => v === value && i !== index);
+  };
+
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+
+    // กันเลือกวิชา "ซ้ำช่อง"
+    const match = /^subject([1-6])$/.exec(name);
+    if (match) {
+      const idx = Number(match[1]) - 1;
+      if (isDuplicateSubject(value, idx)) {
+        Swal.fire("ซ้ำ!", "วิชานี้ถูกเลือกไปแล้วในช่องอื่น", "warning");
+        return;
+      }
+    }
+
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleProjectFileChange = (e) => {
-    setFormData(prev => ({ ...prev, projectFile: e.target.files[0] }));
+    setFormData((prev) => ({ ...prev, projectFile: e.target.files?.[0] || null }));
   };
+  const clearProjectFile = () => setFormData((p) => ({ ...p, projectFile: null }));
 
   const handleActivityFileChange = (e) => {
-    setFormData(prev => ({ ...prev, activityFile: e.target.files[0] }));
+    setFormData((prev) => ({ ...prev, activityFile: e.target.files?.[0] || null }));
   };
+  const clearActivityFile = () => setFormData((p) => ({ ...p, activityFile: null }));
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -66,9 +105,9 @@ const EditDataPage = () => {
       cancelButtonText: "ยกเลิก",
     }).then((result) => {
       if (result.isConfirmed) {
-        updateCompetency(formData); // ส่ง formData
+        updateCompetency(formData);
         Swal.fire("สำเร็จ!", "อัปเดตข้อมูลเรียบร้อยแล้ว", "success").then(() => {
-          navigate('/home');
+          navigate("/home");
           window.scrollTo(0, 0);
         });
       }
@@ -85,7 +124,7 @@ const EditDataPage = () => {
       cancelButtonText: "กลับไปแก้ไขต่อ",
     }).then((result) => {
       if (result.isConfirmed) {
-        navigate('/home');
+        navigate("/home");
         window.scrollTo(0, 0);
       }
     });
@@ -94,116 +133,301 @@ const EditDataPage = () => {
   if (!user) return <div>กำลังโหลดข้อมูล...</div>;
 
   return (
-    <div style={{ backgroundColor: '#f4f7fa', minHeight: '100vh' }}>
+    <div
+      className="min-vh-100"
+      style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}
+    >
       {/* Top Bar */}
-      <div className="d-flex align-items-center p-2" style={{ height: '60px', backgroundColor: '#6f42c1' }}>
-        <img src="/src/assets/csit.jpg" alt="Logo" style={{ height: '50px', margin: '0 10px' }} />
-        <h5 className="text-white fw-bold m-0" style={{ marginLeft: '10px' }}>CSIT Competency System</h5>
+      <div
+        className="d-flex align-items-center px-3"
+        style={{
+          height: 72,
+          background: "linear-gradient(90deg, #6f42c1, #8e5cff)",
+          boxShadow: "0 4px 14px rgba(111,66,193,.22)",
+        }}
+      >
+        <img
+          src="/src/assets/csit.jpg"
+          alt="Logo"
+          className="rounded-3 me-3"
+          style={{ height: 40, width: 40, objectFit: "cover" }}
+        />
+        <h5 className="text-white fw-semibold m-0">CSIT Competency System</h5>
+
         <div className="ms-auto d-flex align-items-center">
-          <span className="text-white me-3">{user ? `${user.username} ${user.fullName}` : 'ไม่พบผู้ใช้'}</span>
-          <button className="btn btn-light btn-sm" onClick={() => navigate('/login')}>ออกจากระบบ</button>
+          <span className="text-white-50 me-3">
+            {user ? `${user.username} ${user.fullName}` : "ไม่พบผู้ใช้"}
+          </span>
+          <button
+            className="btn btn-light btn-sm rounded-pill"
+            onClick={() => {
+              logout?.();
+              navigate("/login");
+            }}
+          >
+            ออกจากระบบ
+          </button>
         </div>
       </div>
 
       {/* Form Container */}
-      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: 'calc(100vh - 60px)' }}>
-        <div
-          style={{
-            backgroundColor: 'white',
-            padding: '40px',
-            borderRadius: '10px',
-            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)',
-            width: '100%',
-            maxWidth: '600px',
-            marginTop: '20px',
-            marginBottom: '20px',
-          }}
-        >
-          <h2 className="text-center mb-4">แก้ไขข้อมูลสมรรถนะของตนเอง</h2>
+      <div className="container-xxl py-4">
+        <div className="row justify-content-center">
+          <div className="col-12 col-lg-8 col-xl-7">
+            <div
+              className="card border-0 shadow-sm rounded-4"
+              style={{ backdropFilter: "blur(6px)", background: "rgba(255,255,255,.95)" }}
+            >
+              <div className="card-body p-4 p-lg-5">
+                <h2 className="h4 fw-semibold text-center mb-4">
+                  แก้ไขข้อมูลสมรรถนะของตนเอง
+                </h2>
 
-          <form onSubmit={handleSubmit}>
-            <div className="row">
-              {/* Student Info */}
-              <div className="col-12 mb-3">
-                <label className="form-label">รหัสนิสิต</label>
-                <input type="text" className="form-control" name="studentId" value={formData.studentId} readOnly />
-              </div>
-              <div className="col-12 mb-3">
-                <label className="form-label">ชื่อ</label>
-                <input type="text" className="form-control" name="name" value={formData.name} readOnly />
-              </div>
-              <div className="col-12 mb-3">
-                <label className="form-label">สาขา</label>
-                <input type="text" className="form-control" name="department" value={formData.department} readOnly />
-              </div>
-
-              {/* Subject Fields */}
-              <div className="col-12 mb-3">
-                <label className="form-label">วิชาเลือก</label>
-                <div className="row">
-                  {[...Array(6)].map((_, index) => (
-                    <div key={index} className="col-12 mb-3">
-                      <select
-                        className="form-select"
-                        name={`subject${index + 1}`}
-                        value={formData[`subject${index + 1}`]}
-                        onChange={handleChange}
-                      >
-                        <option value="">เลือกวิชา {index + 1}</option>
-                        <option value={`วิชา ${index + 1}`}>วิชา {index + 1}</option>
-                      </select>
+                <form onSubmit={handleSubmit}>
+                  {/* SECTION: ข้อมูลผู้ใช้ */}
+                  <div className="mb-4">
+                    <div className="small text-uppercase text-muted fw-semibold mb-3">
+                      ข้อมูลผู้ใช้
                     </div>
-                  ))}
-                </div>
-              </div>
+                    <div className="row g-3">
+                      <div className="col-sm-4">
+                        <div className="form-floating">
+                          <input
+                            type="text"
+                            className="form-control"
+                            id="studentId"
+                            value={formData.studentId}
+                            readOnly
+                          />
+                          <label htmlFor="studentId">รหัสนิสิต</label>
+                        </div>
+                      </div>
+                      <div className="col-sm-4">
+                        <div className="form-floating">
+                          <input
+                            type="text"
+                            className="form-control"
+                            id="name"
+                            value={formData.name}
+                            readOnly
+                          />
+                          <label htmlFor="name">ชื่อ</label>
+                        </div>
+                      </div>
+                      <div className="col-sm-4">
+                        <div className="form-floating">
+                          <input
+                            type="text"
+                            className="form-control"
+                            id="department"
+                            value={formData.department}
+                            readOnly
+                          />
+                          <label htmlFor="department">สาขา</label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-              {/* Year, Grade, Skills */}
-              <div className="col-12 mb-3">
-                <label className="form-label">ชั้นปี</label>
-                <select className="form-select" name="year" value={formData.year} onChange={handleChange} required>
-                  <option value="">เลือกชั้นปี</option>
-                  <option value="1">ชั้นปี 1</option>
-                  <option value="2">ชั้นปี 2</option>
-                  <option value="3">ชั้นปี 3</option>
-                  <option value="4">ชั้นปี 4</option>
-                </select>
-              </div>
+                  {/* SECTION: วิชาเลือก */}
+                  <div className="mb-4">
+                    <div className="small text-uppercase text-muted fw-semibold mb-3">
+                      วิชาเลือก
+                    </div>
+                    <div className="row g-3">
+                      {Array.from({ length: 6 }).map((_, i) => (
+                        <div key={i} className="col-12 col-md-6">
+                          <div className="form-floating">
+                            <select
+                              className="form-select"
+                              id={`subject${i + 1}`}
+                              name={`subject${i + 1}`}
+                              value={formData[`subject${i + 1}`]}
+                              onChange={handleChange}
+                            >
+                              <option value="">— เลือกวิชา {i + 1} —</option>
+                              {electiveSubjects.map((s) => (
+                                <option
+                                  key={s.code}
+                                  value={s.name}
+                                  disabled={
+                                    selectedSubjects.includes(s.name) &&
+                                    formData[`subject${i + 1}`] !== s.name
+                                  }
+                                >
+                                  {s.name} ({s.code})
+                                </option>
+                              ))}
+                            </select>
+                            <label htmlFor={`subject${i + 1}`}>วิชา {i + 1}</label>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {selectedSubjects.length > 0 && (
+                      <div className="mt-2 small text-muted">
+                        เลือกแล้ว: {selectedSubjects.join(", ")}
+                      </div>
+                    )}
+                  </div>
 
-              <div className="col-12 mb-3">
-                <label className="form-label">เกรด</label>
-                <input type="text" className="form-control" name="grade" value={formData.grade} onChange={handleChange} required />
-              </div>
+                  {/* SECTION: ชั้นปี / เกรด / ทักษะ */}
+                  <div className="mb-4">
+                    <div className="small text-uppercase text-muted fw-semibold mb-3">
+                      ชั้นปี & เกรด & ทักษะ
+                    </div>
+                    <div className="row g-3">
+                      <div className="col-sm-4">
+                        <div className="form-floating">
+                          <select
+                            className="form-select"
+                            id="year"
+                            name="year"
+                            value={formData.year}
+                            onChange={handleChange}
+                            required
+                          >
+                            <option value="">เลือกชั้นปี</option>
+                            <option value="1">ชั้นปี 1</option>
+                            <option value="2">ชั้นปี 2</option>
+                            <option value="3">ชั้นปี 3</option>
+                            <option value="4">ชั้นปี 4</option>
+                          </select>
+                          <label htmlFor="year">ชั้นปี</label>
+                        </div>
+                      </div>
 
-              <div className="col-12 mb-3">
-                <label className="form-label">Hard Skill</label>
-                <input type="text" className="form-control" name="hardSkill" value={formData.hardSkill} onChange={handleChange} required />
-              </div>
+                      <div className="col-sm-4">
+                        <div className="form-floating">
+                          <input
+                            type="text"
+                            className="form-control"
+                            id="grade"
+                            name="grade"
+                            value={formData.grade}
+                            onChange={handleChange}
+                            placeholder="เช่น 3.25"
+                            required
+                          />
+                          <label htmlFor="grade">เกรดเฉลี่ย</label>
+                        </div>
+                      </div>
 
-              <div className="col-12 mb-3">
-                <label className="form-label">Soft Skill</label>
-                <input type="text" className="form-control" name="softSkill" value={formData.softSkill} onChange={handleChange} required />
-              </div>
+                      <div className="col-sm-12">
+                        <div className="form-floating mb-3">
+                          <input
+                            type="text"
+                            className="form-control"
+                            id="hardSkill"
+                            name="hardSkill"
+                            value={formData.hardSkill}
+                            onChange={handleChange}
+                            placeholder="Hard Skill"
+                            required
+                          />
+                          <label htmlFor="hardSkill">Hard Skill</label>
+                        </div>
+                        <div className="form-floating">
+                          <input
+                            type="text"
+                            className="form-control"
+                            id="softSkill"
+                            name="softSkill"
+                            value={formData.softSkill}
+                            onChange={handleChange}
+                            placeholder="Soft Skill"
+                            required
+                          />
+                          <label htmlFor="softSkill">Soft Skill</label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-              {/* Files */}
-              <div className="col-12 mb-3">
-                <label className="form-label">ผลงาน (เลือกใหม่ถ้าต้องการอัปเดต)</label>
-                <input type="file" className="form-control" name="projectFile" onChange={handleProjectFileChange} />
-              </div>
+                  {/* SECTION: ไฟล์แนบ */}
+                  <div className="mb-4">
+                    <div className="small text-uppercase text-muted fw-semibold mb-3">
+                      ไฟล์แนบ
+                    </div>
+                    <div className="row g-3">
+                      <div className="col-sm-6">
+                        <label className="form-label">ผลงาน (เลือกใหม่ถ้าต้องการอัปเดต)</label>
+                        <input
+                          type="file"
+                          className="form-control"
+                          onChange={handleProjectFileChange}
+                        />
+                        {formData.projectFile && (
+                          <div className="d-flex align-items-center gap-2 mt-1">
+                            <div className="form-text">
+                              ไฟล์: {formData.projectFile.name}
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-outline-danger btn-sm"
+                              onClick={clearProjectFile}
+                            >
+                              ลบไฟล์
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-sm-6">
+                        <label className="form-label">กิจกรรมเสริม (เลือกใหม่ถ้าต้องการอัปเดต)</label>
+                        <input
+                          type="file"
+                          className="form-control"
+                          onChange={handleActivityFileChange}
+                        />
+                        {formData.activityFile && (
+                          <div className="d-flex align-items-center gap-2 mt-1">
+                            <div className="form-text">
+                              ไฟล์: {formData.activityFile.name}
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-outline-danger btn-sm"
+                              onClick={clearActivityFile}
+                            >
+                              ลบไฟล์
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
-              <div className="col-12 mb-3">
-                <label className="form-label">กิจกรรมเสริม (เลือกใหม่ถ้าต้องการอัปเดต)</label>
-                <input type="file" className="form-control" name="activityFile" onChange={handleActivityFileChange} />
-              </div>
-
-              {/* Buttons */}
-              <div className="d-flex justify-content-between mt-4">
-                <button type="submit" className="btn btn-primary w-80">บันทึก</button>
-                <button type="button" className="btn btn-secondary w-60" onClick={handleCancel}>ยกเลิก</button>
+                  {/* Buttons */}
+                  <div className="d-flex flex-wrap gap-2 justify-content-end">
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary rounded-3"
+                      onClick={handleCancel}
+                    >
+                      ยกเลิก
+                    </button>
+                    <button type="submit" className="btn btn-primary rounded-3">
+                      บันทึก
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
-          </form>
+
+            <div className="text-center text-muted small mt-3">
+              ตรวจทานข้อมูลให้ถูกต้องก่อนกด “บันทึก”
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* Local styles */}
+      <style>{`
+        .form-control:focus, .form-select:focus{
+          box-shadow: 0 0 0 .2rem rgba(111,66,193,.12);
+          border-color: #8e5cff;
+        }
+      `}</style>
     </div>
   );
 };
