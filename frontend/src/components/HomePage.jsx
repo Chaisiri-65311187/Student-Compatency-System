@@ -101,7 +101,9 @@ const HomePage = () => {
         />
         <h5 className="text-white fw-bold m-0" style={{ marginLeft: '10px' }}>CSIT Competency System</h5>
         <div className="ms-auto d-flex align-items-center">
-          <span className="text-white me-3">{user ? `${user.username} ${user.fullName}` : 'ไม่พบผู้ใช้'}</span>
+          <span className="text-white me-3">
+  {user ? `${user.username} ${user.full_name || user.fullName || ""}` : "ไม่พบผู้ใช้"}
+</span>
           <button className="btn btn-light btn-sm" onClick={handleLogout}>ออกจากระบบ</button>
         </div>
       </div>
