@@ -4,19 +4,15 @@ const app = express();
 require("dotenv").config();
 
 const allowlist = [
-  "http://localhost:5173",
-  "http://localhost:5174",
-  "http://localhost:5175",
+  "http://localhost:5173"
 ];
 
 const corsOptions = {
-  origin: (origin, cb) => {
-    if (!origin || allowlist.includes(origin)) return cb(null, true);
-    cb(new Error("Not allowed by CORS"));
-  },
+  origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
   credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  optionsSuccessStatus: 204,
 };
 
 // ✅ ใช้กับทุก request (รวม preflight)
@@ -25,12 +21,21 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ routes
-app.use("/api/users", require("./routes/users"));
-app.use("/api/admin", require("./routes/admin"));
-app.use("/api/competency", require("./routes/competencyRoutes"));
-app.use("/api/announcements", require("./routes/announcements")); // ✅ ย้ายมาข้างบน
-app.use("/api", require("./routes/auth")); // /api/login
+
+function loadRouter(modPath) {
+  const m = require(modPath);
+  if (typeof m === "function") return m;                    // CommonJS: module.exports = router
+  if (m && typeof m.default === "function") return m.default; // ESM transpile: export default router
+  console.error(`❌ Route "${modPath}" export invalid:`, { type: typeof m, defaultType: m && typeof m.default });
+  process.exit(1);
+}
+
+// ✅ routes (ใช้ loadRouter)
+app.use("/api/users",         loadRouter("./routes/users"));
+app.use("/api/admin",         loadRouter("./routes/admin"));
+app.use("/api/competency",    loadRouter("./routes/competencyRoutes"));
+app.use("/api/announcements", loadRouter("./routes/announcements"));
+app.use("/api",               loadRouter("./routes/auth")); // /api/login
 
 // health check
 app.get("/health", (req, res) => res.json({ ok: true }));

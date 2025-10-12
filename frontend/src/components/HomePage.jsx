@@ -4,14 +4,14 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { listAnnouncements } from "../services/api";
 
-// ===== Date helpers (TH) =====
+/* ===== Date helpers (TH) ===== */
 const tz = "Asia/Bangkok";
 
 function parseSafeDate(s) {
   if (!s) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s));
   if (m) {
-    const [_, y, mo, d] = m;
+    const [, y, mo, d] = m;
     return new Date(Number(y), Number(mo) - 1, Number(d));
   }
   const dt = new Date(s);
@@ -29,47 +29,99 @@ function formatDateTH(s, withYear = true) {
   }).format(dt);
 }
 
-// ===== UI const =====
+function dateTH(d) {
+  const dt = parseSafeDate(d);
+  if (!dt) return "-";
+  return new Intl.DateTimeFormat("th-TH", {
+    timeZone: tz,
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(dt);
+}
+
+function timeHM(t) {
+  // รองรับรูปแบบ "HH:mm:ss", "HH:mm", "HHmm" หรือ Date-like
+  if (!t) return "";
+  if (typeof t === "string") {
+    const hhmm = t.match(/^(\d{2}):?(\d{2})/);
+    if (hhmm) return `${hhmm[1]}:${hhmm[2]}`;
+  }
+  try {
+    const dt = new Date(`1970-01-01T${t}`);
+    if (!isNaN(dt.getTime())) {
+      return dt.toLocaleTimeString("th-TH", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
+    }
+  } catch (_) {}
+  return String(t).slice(0, 5);
+}
+
+function rangeLine(p) {
+  const date =
+    p?.end_date && p.end_date !== p.start_date
+      ? `${dateTH(p.start_date)} – ${dateTH(p.end_date)}`
+      : dateTH(p?.start_date);
+  const time =
+    p?.start_time || p?.end_time
+      ? ` (${timeHM(p.start_time) || "—"}–${timeHM(p.end_time) || "—"})`
+      : "";
+  return `${date}${time}`;
+}
+
+/* ===== UI const ===== */
 const PURPLE = "#6f42c1";
 
-const HomePage = () => {
+export default function HomePage() {
+  /* Filters (chip style) */
   const [filterYear, setFilterYear] = useState({
-    year1: false, year2: false, year3: false, year4: false,
+    year1: false,
+    year2: false,
+    year3: false,
+    year4: false,
   });
   const [filterDepartment, setFilterDepartment] = useState({ cs: false, it: false });
   const [searchTerm, setSearchTerm] = useState("");
 
+  /* Data state */
   const [announcements, setAnnouncements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState("");
 
+  /* Auth / nav */
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // Modal
+  /* Modal */
   const [showModal, setShowModal] = useState(false);
   const [selectedAnnouncement, setSelectedAnnouncement] = useState(null);
 
+  /* Load announcements (status=open) */
   useEffect(() => {
     const run = async () => {
       setLoading(true);
       setLoadErr("");
       try {
-        const rows = await listAnnouncements();
-        const normalized = (rows || []).map((r) => ({
+        // ส่งเฉพาะ status=open ไปที่ backend ที่เหลือกรองฝั่ง client เพื่อยืดหยุ่น
+        const data = await listAnnouncements({ status: "open" });
+        // รองรับทั้งรูปแบบ data.rows และ array ตรงๆ
+        const rows = Array.isArray(data) ? data : Array.isArray(data?.rows) ? data.rows : [];
+        const normalized = rows.map((r) => ({
           id: r.id,
           title: r.title,
-          teacher: r.teacher,
-          description: r.description,
-          department: r.department,
+          teacher: r.teacher || "-",
+          description: r.description || "",
+          department: r.department || "ไม่จำกัด",
           year: Number(r.year) || null,
-          workDate: r.work_date,
+          work_date: r.work_date || null,     // เดิม
+          work_end: r.work_end || null,       // เดิม
+          work_periods: Array.isArray(r.work_periods) ? r.work_periods : [], // ใหม่: หลายช่วง
           deadline: r.deadline || null,
           status: r.status || "open",
           location: r.location || "",
         }));
         setAnnouncements(normalized);
       } catch (e) {
+        console.error(e);
         setLoadErr(e?.message || "โหลดประกาศไม่สำเร็จ");
       } finally {
         setLoading(false);
@@ -78,39 +130,59 @@ const HomePage = () => {
     run();
   }, []);
 
-  // Filter
+  /* Client-side filter */
   const filteredAnnouncements = useMemo(() => {
+    const yearActive =
+      filterYear.year1 || filterYear.year2 || filterYear.year3 || filterYear.year4;
+
+    const deptActive = filterDepartment.cs || filterDepartment.it;
+
+    const kw = searchTerm.trim().toLowerCase();
+
     return (announcements || []).filter((item) => {
-      const yearSelected =
-        (!filterYear.year1 && !filterYear.year2 && !filterYear.year3 && !filterYear.year4) ||
+      // ปี
+      const byYear =
+        !yearActive ||
         (filterYear.year1 && item.year === 1) ||
         (filterYear.year2 && item.year === 2) ||
         (filterYear.year3 && item.year === 3) ||
         (filterYear.year4 && item.year === 4);
 
-      const departmentSelected =
-        (!filterDepartment.cs && !filterDepartment.it) ||
+      // สาขา
+      const byDept =
+        !deptActive ||
+        item.department === "ไม่จำกัด" ||
         (filterDepartment.cs && item.department === "วิทยาการคอมพิวเตอร์") ||
         (filterDepartment.it && item.department === "เทคโนโลยีสารสนเทศ");
 
-      const kw = searchTerm.trim().toLowerCase();
-      const searchSelected =
+      // คีย์เวิร์ด
+      const byKW =
         !kw ||
         (item.title || "").toLowerCase().includes(kw) ||
-        (item.teacher || "").toLowerCase().includes(kw);
+        (item.teacher || "").toLowerCase().includes(kw) ||
+        (item.description || "").toLowerCase().includes(kw);
 
-      return yearSelected && departmentSelected && searchSelected;
+      return byYear && byDept && byKW;
     });
   }, [announcements, filterYear, filterDepartment, searchTerm]);
 
-  // Handlers
+  /* Handlers */
   const handleYearToggle = (key) => setFilterYear((p) => ({ ...p, [key]: !p[key] }));
   const handleDeptToggle = (key) => setFilterDepartment((p) => ({ ...p, [key]: !p[key] }));
-  const handleLogout = () => { logout(); navigate("/login"); };
-  const openModal = (a) => { setSelectedAnnouncement(a); setShowModal(true); };
-  const closeModal = () => { setShowModal(false); setSelectedAnnouncement(null); };
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
+  const openModal = (a) => {
+    setSelectedAnnouncement(a);
+    setShowModal(true);
+  };
+  const closeModal = () => {
+    setShowModal(false);
+    setSelectedAnnouncement(null);
+  };
 
-  // Mini parts
+  /* Small UI atoms */
   const StatusBadge = ({ status }) => {
     const map = {
       open: "badge text-bg-success",
@@ -147,33 +219,42 @@ const HomePage = () => {
 
   return (
     <div className="min-vh-100" style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}>
-      {/* Top Bar (เรียบง่าย) */}
+      {/* Top Bar (โลโก้เดิม ไม่แก้) */}
       <div
         className="hero-bar"
         style={{
           height: 72,
           background: "linear-gradient(90deg, #6f42c1, #8e5cff)",
-          position: "sticky", top: 0, zIndex: 1040,
+          position: "sticky",
+          top: 0,
+          zIndex: 1040,
           boxShadow: "0 4px 16px rgba(111,66,193,.22)",
         }}
       >
         <div className="container-xxl d-flex align-items-center h-100">
           <div className="d-flex align-items-center">
-            <img src="/src/assets/csit.jpg" alt="Logo" className="rounded-3" style={{ height: 40, width: 40, objectFit: "cover" }} />
+            <img
+              src="/src/assets/csit.jpg"
+              alt="Logo"
+              className="rounded-3"
+              style={{ height: 40, width: 40, objectFit: "cover" }}
+            />
             <div className="ms-3 text-white fw-semibold">CSIT Competency System</div>
           </div>
           <div className="ms-auto d-flex align-items-center gap-2">
             <div className="text-white-50 d-none d-md-block">
               {user ? `${user.username} ${user.full_name || user.fullName || ""}` : "ไม่พบผู้ใช้"}
             </div>
-            <button className="btn btn-light btn-sm" onClick={handleLogout}>ออกจากระบบ</button>
+            <button className="btn btn-light btn-sm" onClick={handleLogout}>
+              ออกจากระบบ
+            </button>
           </div>
         </div>
       </div>
 
       <div className="container-xxl py-4">
         <div className="row g-4">
-          {/* Sidebar (แบบมินิมอล) */}
+          {/* Sidebar Filters */}
           <div className="col-12 col-xl-3">
             <div className="card border-0 shadow-sm rounded-4" style={{ position: "sticky", top: 96 }}>
               <div className="card-body">
@@ -204,13 +285,17 @@ const HomePage = () => {
                 <input
                   type="text"
                   className="form-control ps-3 rounded-3"
-                  placeholder="ค้นหา (ชื่อประกาศ / อาจารย์)"
+                  placeholder="ค้นหา (ชื่อประกาศ / อาจารย์ / รายละเอียด)"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              <button className="btn btn-outline-primary rounded-3" onClick={() => navigate("/add-data")}>เพิ่มข้อมูล</button>
-              <button className="btn btn-outline-secondary rounded-3" onClick={() => navigate("/edit")}>แก้ไขข้อมูล</button>
+              <button className="btn btn-outline-primary rounded-3" onClick={() => navigate("/add-data")}>
+                เพิ่มข้อมูล
+              </button>
+              <button className="btn btn-outline-secondary rounded-3" onClick={() => navigate("/edit")}>
+                แก้ไขข้อมูล
+              </button>
             </div>
 
             {/* Results */}
@@ -235,11 +320,8 @@ const HomePage = () => {
                         className="ratio ratio-21x9"
                         style={{ background: `linear-gradient(135deg, ${PURPLE}, #b388ff)`, position: "relative" }}
                       >
-                        {/* ซ้าย-ขวา ไม่ให้ชนกัน */}
                         <div className="banner-overlay">
-                          {item.year && (
-                            <span className={`year-pill year${item.year}`}>ปี {item.year}</span>
-                          )}
+                          {item.year && <span className={`year-pill year${item.year}`}>ปี {item.year}</span>}
                           <span className="status-wrap">
                             <StatusBadge status={item.status} />
                           </span>
@@ -248,15 +330,42 @@ const HomePage = () => {
 
                       <div className="card-body d-flex flex-column">
                         <h5 className="mb-1 text-truncate" title={item.title}>{item.title}</h5>
-                        <div className="text-muted small mb-2">อาจารย์ผู้รับผิดชอบ: <span className="text-dark fw-semibold">{item.teacher}</span></div>
+                        <div className="text-muted small mb-2">
+                          อาจารย์ผู้รับผิดชอบ: <span className="text-dark fw-semibold">{item.teacher}</span>
+                        </div>
 
-                        {/* วันที่: แยกสองบรรทัดชัดเจน */}
-                        <div className="small mb-1"><span className="text-muted">วันเริ่มทำงาน:</span> <span className="fw-medium">{formatDateTH(item.workDate)}</span></div>
-                        {item.deadline && (
-                          <div className="small mb-2"><span className="text-muted">วันปิดรับสมัคร:</span> <span className="fw-medium">{formatDateTH(item.deadline)}</span></div>
+                        {/* ช่วงวันทำงาน: รองรับหลายช่วง (work_periods) */}
+                        {Array.isArray(item.work_periods) && item.work_periods.length > 0 ? (
+                          <div className="small mb-2">
+                            <div className="text-muted">ช่วงวันที่ทำงาน:</div>
+                            {item.work_periods.map((p, i) => (
+                              <div key={i}>• {rangeLine(p)}</div>
+                            ))}
+                          </div>
+                        ) : (
+                          (item.work_date || item.work_end) && (
+                            <div className="small mb-2">
+                              <span className="text-muted">ช่วงวันที่ทำงาน:</span>{" "}
+                              <span className="fw-medium">
+                                {item.work_end && item.work_end !== item.work_date
+                                  ? `${dateTH(item.work_date)} – ${dateTH(item.work_end)}`
+                                  : dateTH(item.work_date)}
+                              </span>
+                            </div>
+                          )
                         )}
 
-                        <div className="small mb-2"><span className="text-muted">สาขา:</span> <span className="fw-medium">{item.department || "-"}</span></div>
+                        {/* deadline / department / location */}
+                        {item.deadline && (
+                          <div className="small mb-1">
+                            <span className="text-muted">วันปิดรับสมัคร:</span>{" "}
+                            <span className="fw-medium">{formatDateTH(item.deadline)}</span>
+                          </div>
+                        )}
+                        <div className="small mb-1">
+                          <span className="text-muted">สาขา:</span>{" "}
+                          <span className="fw-medium">{item.department || "-"}</span>
+                        </div>
                         {item.location && <div className="small text-muted mb-2">สถานที่: {item.location}</div>}
 
                         {item.description && (
@@ -264,8 +373,19 @@ const HomePage = () => {
                         )}
 
                         <div className="mt-auto d-flex gap-2">
-                          <button className="btn btn-outline-secondary flex-grow-1 rounded-3" onClick={() => openModal(item)}>ดูรายละเอียด</button>
-                          <button className="btn btn-primary rounded-3" disabled={item.status !== "open"} onClick={() => openModal(item)}>สมัคร</button>
+                          <button
+                            className="btn btn-outline-secondary flex-grow-1 rounded-3"
+                            onClick={() => openModal(item)}
+                          >
+                            ดูรายละเอียด
+                          </button>
+                          <button
+                            className="btn btn-primary rounded-3"
+                            disabled={item.status !== "open"}
+                            onClick={() => openModal(item)}
+                          >
+                            สมัคร
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -301,10 +421,25 @@ const HomePage = () => {
                     <StatusBadge status={selectedAnnouncement.status} />
                   </div>
 
-                  <div className="col-md-6">
-                    <div className="small text-muted mb-1">วันเริ่มทำงาน</div>
-                    <div className="fw-medium">{formatDateTH(selectedAnnouncement.workDate)}</div>
+                  {/* แสดง work_periods ใน Modal เช่นกัน */}
+                  <div className="col-12">
+                    <div className="small text-muted mb-1">ช่วงวันที่ทำงาน</div>
+                    {Array.isArray(selectedAnnouncement.work_periods) && selectedAnnouncement.work_periods.length > 0 ? (
+                      <div className="fw-normal">
+                        {selectedAnnouncement.work_periods.map((p, i) => (
+                          <div key={i}>• {rangeLine(p)}</div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="fw-medium">
+                        {selectedAnnouncement.work_end &&
+                        selectedAnnouncement.work_end !== selectedAnnouncement.work_date
+                          ? `${dateTH(selectedAnnouncement.work_date)} – ${dateTH(selectedAnnouncement.work_end)}`
+                          : dateTH(selectedAnnouncement.work_date)}
+                      </div>
+                    )}
                   </div>
+
                   {selectedAnnouncement.deadline && (
                     <div className="col-md-6">
                       <div className="small text-muted mb-1">วันปิดรับสมัคร</div>
@@ -328,15 +463,19 @@ const HomePage = () => {
                     </div>
                   )}
 
-                  <div className="col-12">
-                    <div className="small text-muted mb-1">รายละเอียด</div>
-                    <div className="fw-normal">{selectedAnnouncement.description}</div>
-                  </div>
+                  {selectedAnnouncement.description && (
+                    <div className="col-12">
+                      <div className="small text-muted mb-1">รายละเอียด</div>
+                      <div className="fw-normal">{selectedAnnouncement.description}</div>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="modal-footer border-0">
                 <button className="btn btn-secondary rounded-3" onClick={closeModal}>ปิด</button>
-                <button className="btn btn-primary rounded-3" disabled={selectedAnnouncement.status !== "open"}>สมัคร</button>
+                <button className="btn btn-primary rounded-3" disabled={selectedAnnouncement.status !== "open"}>
+                  สมัคร
+                </button>
               </div>
             </div>
           </div>
@@ -349,10 +488,8 @@ const HomePage = () => {
         .glass-card:hover{ transform: translateY(-2px); box-shadow: 0 12px 30px rgba(28,39,49,.12)!important; }
         .line-clamp-3{ display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
-        /* แบนเนอร์โปร่งใส ไม่ให้เกิดกรอบเทา */
         .glass-card .ratio-21x9{ aspect-ratio: 21 / 9; width: 100%; background: transparent; border-radius: 1rem 1rem 0 0; overflow: hidden; }
 
-        /* ซ้าย-ขวา จัดไม่ให้ชนกัน */
         .glass-card .banner-overlay{
           position:absolute; inset:0;
           display:flex; justify-content:space-between; align-items:flex-start;
@@ -361,7 +498,6 @@ const HomePage = () => {
         .glass-card .banner-overlay .status-wrap,
         .glass-card .banner-overlay .year-pill{ pointer-events:auto; }
 
-        /* ปี: เรียบ ชัด สะอาด */
         .year-pill{
           display:inline-flex; align-items:center; gap:.4rem;
           padding:.45rem .9rem; border-radius:9999px;
@@ -373,11 +509,8 @@ const HomePage = () => {
         .year-pill.year3{ background:linear-gradient(135deg,#f7971e,#ffd200); color:#222; }
         .year-pill.year4{ background:linear-gradient(135deg,#ff416c,#ff4b2b); }
 
-        /* ปรับ badge สถานะให้เล็กลงอ่านง่าย */
         .glass-card .status-wrap .badge{ font-size:.85rem; padding:.4rem .6rem; }
       `}</style>
     </div>
   );
-};
-
-export default HomePage;
+}

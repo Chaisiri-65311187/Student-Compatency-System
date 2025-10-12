@@ -1,5 +1,5 @@
 // src/components/admin/ManageUsersPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { getUsers, createUser, updateUser, deleteUser, listMajors } from "../../services/api";
@@ -13,31 +13,27 @@ const roles = [
   { value: "admin",   label: "ผู้ดูแลระบบ" },
 ];
 
-const roleText = (r) => {
-  switch (r) {
-    case "admin": return "ผู้ดูแลระบบ";
-    case "teacher": return "อาจารย์";
-    case "student": return "นิสิต";
-    default: return r || "-";
-  }
-};
-const roleBadge = (r) => {
-  switch (r) {
-    case "admin": return "badge text-bg-danger";
-    case "teacher": return "badge text-bg-primary";
-    case "student": return "badge text-bg-success";
-    default: return "badge text-bg-secondary";
-  }
+const roleText = (r) => r === "admin" ? "ผู้ดูแลระบบ" : r === "teacher" ? "อาจารย์" : r === "student" ? "นิสิต" : r || "-";
+const roleBadge = (r) =>
+  r === "admin"   ? "badge text-bg-danger"   :
+  r === "teacher" ? "badge text-bg-primary"  :
+  r === "student" ? "badge text-bg-success"  : "badge text-bg-secondary";
+
+const tz = "Asia/Bangkok";
+const formatDateTH = (s) => {
+  if (!s) return "-";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "-";
+  return new Intl.DateTimeFormat("th-TH", { timeZone: tz, year: "numeric", month: "short", day: "2-digit" }).format(d);
 };
 
-const toast = Swal.mixin({
-  toast: true, position: "top-end", showConfirmButton: false, timer: 1800, timerProgressBar: true,
-});
+const toast = Swal.mixin({ toast: true, position: "top-end", showConfirmButton: false, timer: 1800, timerProgressBar: true });
 
 export default function ManageUsersPage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
+  // ---------- state ----------
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
 
@@ -53,25 +49,39 @@ export default function ManageUsersPage() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({
-    username: "", password: "", full_name: "", role: "student", major_id: "",
-  });
+  const [form, setForm] = useState({ username: "", password: "", full_name: "", role: "student", major_id: "" });
+  const [showPw, setShowPw] = useState(false);
 
-  // เมนู “จัดการ” แบบ custom dropdown (ไม่ต้องใช้ Bootstrap JS)
-  const [menuOpenId, setMenuOpenId] = useState(null);
-  useEffect(() => {
-    const onDocClick = () => setMenuOpenId(null);
-    document.addEventListener("click", onDocClick);
-    return () => document.removeEventListener("click", onDocClick);
-  }, []);
+  // sort
+  const [sort, setSort] = useState({ key: "created_at", dir: "desc" }); // asc|desc
+  const sortedRows = useMemo(() => {
+    const r = [...rows];
+    const { key, dir } = sort;
+    r.sort((a, b) => {
+      if (key === "created_at") {
+        const da = new Date(a?.created_at || 0).getTime();
+        const db = new Date(b?.created_at || 0).getTime();
+        return dir === "asc" ? da - db : db - da;
+      }
+      const va = (a?.[key] ?? "").toString().toLowerCase();
+      const vb = (b?.[key] ?? "").toString().toLowerCase();
+      if (va < vb) return dir === "asc" ? -1 : 1;
+      if (va > vb) return dir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return r;
+  }, [rows, sort]);
 
-  // guard
+  // ---------- guards ----------
   useEffect(() => {
     if (!user) return navigate("/login");
     if (user.role !== "admin") return navigate("/home");
   }, [user, navigate]);
 
-  useEffect(() => { listMajors().then(setMajors).catch(() => {}); }, []);
+  // ---------- effects ----------
+  useEffect(() => {
+    listMajors().then(setMajors).catch(() => {});
+  }, []);
 
   // debounce search
   useEffect(() => {
@@ -94,25 +104,25 @@ export default function ManageUsersPage() {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [search, role, page, limit]);
 
+  // ---------- handlers ----------
   const openCreate = () => {
     setEditing(null);
     setForm({ username: "", password: "", full_name: "", role: "student", major_id: "" });
+    setShowPw(false);
     setShowForm(true);
   };
   const openEdit = (u) => {
     setEditing(u);
-    setForm({
-      username: u.username, password: "", full_name: u.full_name || "",
-      role: u.role || "student", major_id: u.major_id || "",
-    });
+    setForm({ username: u.username, password: "", full_name: u.full_name || "", role: u.role || "student", major_id: u.major_id || "" });
+    setShowPw(false);
     setShowForm(true);
   };
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!editing && !form.password) { Swal.fire({ icon: "warning", title: "โปรดกรอกรหัสผ่าน" }); return; }
-    if (!form.full_name?.trim()) { Swal.fire({ icon: "warning", title: "โปรดกรอกชื่อ-นามสกุล" }); return; }
-    if (!editing && !form.username?.trim()) { Swal.fire({ icon: "warning", title: "โปรดกรอกรหัส/อีเมล" }); return; }
+    if (!editing && !form.password) return Swal.fire({ icon: "warning", title: "โปรดกรอกรหัสผ่าน" });
+    if (!form.full_name?.trim()) return Swal.fire({ icon: "warning", title: "โปรดกรอกชื่อ-นามสกุล" });
+    if (!editing && !form.username?.trim()) return Swal.fire({ icon: "warning", title: "โปรดกรอกรหัส/อีเมล" });
 
     setSaving(true);
     try {
@@ -136,9 +146,9 @@ export default function ManageUsersPage() {
       }
       setShowForm(false);
       await load();
-    } catch (e) {
-      console.error(e);
-      Swal.fire({ icon: "error", title: "บันทึกไม่สำเร็จ", text: e?.message || "กรุณาลองใหม่อีกครั้ง" });
+    } catch (e2) {
+      console.error(e2);
+      Swal.fire({ icon: "error", title: "บันทึกไม่สำเร็จ", text: e2?.message || "กรุณาลองใหม่อีกครั้ง" });
     } finally {
       setSaving(false);
     }
@@ -164,145 +174,173 @@ export default function ManageUsersPage() {
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
   const showMajor  = form.role === "student" || form.role === "teacher";
 
+  // sort helpers
+  const sortIcon = (key) => (sort.key !== key ? "bi-arrow-down-up" : sort.dir === "asc" ? "bi-sort-down" : "bi-sort-up");
+  const clickSort = (key) => setSort((s) => (s.key !== key ? { key, dir: "asc" } : { key, dir: s.dir === "asc" ? "desc" : "asc" }));
+
+  // focus first input in modal
+  const firstInputRef = useRef(null);
+  useEffect(() => { if (showForm) setTimeout(() => firstInputRef.current?.focus(), 50); }, [showForm, editing]);
+
+  // ---------- JSX ----------
   return (
-    <div className="container py-4">
-      {/* Header: เพิ่มปุ่มย้อนกลับ */}
-      <div className="d-flex align-items-center justify-content-between mb-3">
-        <div className="d-flex align-items-center gap-2">
-          <button className="btn btn-outline-secondary btn-sm" onClick={() => navigate(-1)}>
-            ← ย้อนกลับ
-          </button>
-          <div>
-            <h2 className="mb-1">จัดการผู้ใช้</h2>
-            <div className="text-muted small">ทั้งหมด {total.toLocaleString()} รายการ</div>
-          </div>
-        </div>
-        <div className="d-flex gap-2">
-          <button className="btn btn-primary" onClick={openCreate}>+ เพิ่มผู้ใช้</button>
+    <div className="min-vh-100" style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}>
+      {/* Top Bar (เหมือนหน้าอื่น) */}
+      <div className="d-flex align-items-center px-3" style={{ height: 72, background: "linear-gradient(90deg, #6f42c1, #8e5cff)", boxShadow: "0 4px 14px rgba(111,66,193,.22)" }}>
+        <img src="/src/assets/csit.jpg" alt="Logo" className="rounded-3 me-3" style={{ height: 40, width: 40, objectFit: "cover" }} />
+        <h5 className="text-white fw-semibold m-0">CSIT Competency System — Admin</h5>
+        <div className="ms-auto d-flex align-items-center">
+          <span className="text-white-50 me-3">{user ? `${user.username} ${user.fullName || user.full_name || ""}` : ""}</span>
+          <button className="btn btn-light btn-sm rounded-pill" onClick={() => { logout?.(); navigate("/login"); }}>ออกจากระบบ</button>
         </div>
       </div>
 
-      {/* Toolbar */}
-      <div className="card shadow-sm mb-3">
-        <div className="card-body d-flex flex-wrap gap-2 align-items-center">
-          <div className="input-group" style={{ maxWidth: 360 }}>
-            <span className="input-group-text"><i className="bi bi-search" aria-hidden="true" /></span>
-            <input
-              className="form-control"
-              placeholder="ค้นหา ชื่อ/รหัส"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              aria-label="ค้นหาผู้ใช้"
-            />
-          </div>
-
-          <select
-            className="form-select"
-            style={{ maxWidth: 220 }}
-            value={role}
-            onChange={(e) => { setPage(1); setRole(e.target.value); }}
-            aria-label="กรองตามบทบาท"
-          >
-            {roles.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
-
-          <div className="ms-auto d-flex align-items-center gap-2">
-            {loading && (
-              <span className="text-muted small d-flex align-items-center gap-2">
-                <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
-                กำลังโหลด…
-              </span>
-            )}
+      <div className="container-xxl py-4">
+        {/* Header */}
+        <div className="card border-0 shadow-sm rounded-4 mb-3">
+          <div className="card-body d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div className="d-flex align-items-center gap-2">
+              <button className="btn btn-outline-secondary btn-sm rounded-pill" onClick={() => navigate(-1)}>← ย้อนกลับ</button>
+              <div>
+                <h2 className="mb-0">จัดการผู้ใช้</h2>
+                <div className="text-muted small">ทั้งหมด {total.toLocaleString()} รายการ</div>
+              </div>
+            </div>
+            <div>
+              <button className="btn btn-primary rounded-pill" onClick={openCreate}><i className="bi bi-plus-circle me-1" /> เพิ่มผู้ใช้</button>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Table */}
-      <div className="card shadow-sm">
-        <div className="table-responsive">
-          <table className="table table-sm align-middle mb-0 table-striped">
-            <thead className="table-light">
-              <tr>
-                <th>รหัส/อีเมล</th>
-                <th>ชื่อ</th>
-                <th>บทบาท</th>
-                <th>สาขา</th>
-                <th>สร้างเมื่อ</th>
-                <th className="text-end" style={{ width: 64 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
+        {/* Toolbar */}
+        <div className="card shadow-sm rounded-4 mb-3">
+          <div className="card-body d-flex flex-wrap gap-2 align-items-center">
+            <div className="input-group" style={{ maxWidth: 380 }}>
+              <span className="input-group-text"><i className="bi bi-search" aria-hidden="true" /></span>
+              <input
+                className="form-control"
+                placeholder="ค้นหา ชื่อ/รหัส"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                aria-label="ค้นหาผู้ใช้"
+              />
+              {(search || searchInput) && (
+                <button
+                  className="btn btn-outline-secondary"
+                  onClick={() => { setSearchInput(""); setSearch(""); setPage(1); }}
+                  title="ล้างการค้นหา"
+                >
+                  ล้าง
+                </button>
+              )}
+            </div>
+
+            <select
+              className="form-select"
+              style={{ maxWidth: 240 }}
+              value={role}
+              onChange={(e) => { setPage(1); setRole(e.target.value); }}
+              aria-label="กรองตามบทบาท"
+            >
+              {roles.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+
+            <div className="ms-auto d-flex align-items-center gap-2">
+              {loading && (
+                <span className="text-muted small d-flex align-items-center gap-2">
+                  <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+                  กำลังโหลด…
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="card shadow-sm rounded-4">
+          <div className="table-responsive">
+            <table className="table table-sm align-middle mb-0 table-striped">
+              <thead className="table-light">
                 <tr>
-                  <td colSpan={6} className="text-center py-5">
-                    <div className="spinner-border" role="status" aria-hidden="true" />
-                    <div className="small text-muted mt-2">กำลังโหลดข้อมูล…</div>
-                  </td>
+                  <th role="button" onClick={() => clickSort("username")}>
+                    รหัส/อีเมล <i className={`bi ${sortIcon("username")} ms-1`} />
+                  </th>
+                  <th role="button" onClick={() => clickSort("full_name")}>
+                    ชื่อ <i className={`bi ${sortIcon("full_name")} ms-1`} />
+                  </th>
+                  <th>บทบาท</th>
+                  <th>สาขา</th>
+                  <th role="button" onClick={() => clickSort("created_at")}>
+                    สร้างเมื่อ <i className={`bi ${sortIcon("created_at")} ms-1`} />
+                  </th>
+                  <th className="text-end" style={{ width: 120 }} />
                 </tr>
-              ) : rows.length ? (
-                rows.map((u) => (
-                  <tr key={u.id}>
-                    <td className="fw-medium">{u.username}</td>
-                    <td>{u.full_name}</td>
-                    <td><span className={roleBadge(u.role)}>{roleText(u.role)}</span></td>
-                    <td>{u.dept || "-"}</td>
-                    <td>{u.created_at?.slice(0, 10) || "-"}</td>
-                    <td className="text-end position-relative">
-                       <div className="btn-group btn-group-sm">
-                      <button
-                        className="btn btn-outline-secondary"
-                        onClick={() => openEdit(u)}
-                      >
-                        แก้ไข
-                      </button>
-                      <button
-                        className="btn btn-outline-danger"
-                        onClick={() => remove(u)}
-                      >
-                        ลบ
-                      </button>
-                    </div>
+              </thead>
+              <tbody>
+                {loading ? (
+                  Array.from({ length: 6 }).map((_, i) => (
+                    <tr key={i}>
+                      {Array.from({ length: 6 }).map((__, j) => (
+                        <td key={j}><span className="placeholder col-8" /></td>
+                      ))}
+                    </tr>
+                  ))
+                ) : sortedRows.length ? (
+                  sortedRows.map((u) => (
+                    <tr key={u.id}>
+                      <td className="fw-medium text-nowrap">{u.username}</td>
+                      <td className="text-nowrap">{u.full_name}</td>
+                      <td><span className={roleBadge(u.role)}>{roleText(u.role)}</span></td>
+                      <td className="text-nowrap">{u.dept || "-"}</td>
+                      <td className="text-nowrap">{formatDateTH(u.created_at)}</td>
+                      <td className="text-end">
+                        <div className="btn-group btn-group-sm">
+                          <button className="btn btn-outline-secondary" onClick={() => openEdit(u)}>แก้ไข</button>
+                          <button className="btn btn-outline-danger" onClick={() => remove(u)}>ลบ</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="text-center py-5 text-muted">
+                      <div className="mb-2">ยังไม่มีข้อมูลผู้ใช้</div>
+                      <button className="btn btn-primary" onClick={openCreate}><i className="bi bi-plus-circle me-1" /> เพิ่มผู้ใช้คนแรก</button>
                     </td>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="text-center py-5 text-muted">
-                    <div className="mb-2">ยังไม่มีข้อมูลผู้ใช้</div>
-                    <button className="btn btn-primary" onClick={openCreate}>+ เพิ่มผู้ใช้คนแรก</button>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
-      {/* Pagination */}
-      <div className="d-flex justify-content-end align-items-center gap-2 mt-3">
-        <button className="btn btn-sm btn-outline-secondary" disabled={page <= 1 || loading} onClick={() => setPage((p) => p - 1)}>
-          ก่อนหน้า
-        </button>
-        <span className="small">หน้า {page}/{totalPages}</span>
-        <button className="btn btn-sm btn-outline-secondary" disabled={page >= totalPages || loading} onClick={() => setPage((p) => p + 1)}>
-          ถัดไป
-        </button>
+        {/* Pagination */}
+        <div className="d-flex justify-content-end align-items-center gap-2 mt-3">
+          <button className="btn btn-sm btn-outline-secondary rounded-pill" disabled={page <= 1 || loading} onClick={() => setPage((p) => p - 1)}>ก่อนหน้า</button>
+          <span className="small">หน้า {page}/{totalPages}</span>
+          <button className="btn btn-sm btn-outline-secondary rounded-pill" disabled={page >= totalPages || loading} onClick={() => setPage((p) => p + 1)}>ถัดไป</button>
+        </div>
+
+        <div className="text-center text-muted small mt-3">
+          ผู้ใช้ทั้งหมด {total.toLocaleString()} รายการ
+        </div>
       </div>
 
       {/* Modal */}
       {showForm && (
         <div className="modal d-block" style={{ background: "rgba(0,0,0,.5)" }} role="dialog" aria-modal="true">
           <div className="modal-dialog">
-            <form className="modal-content" onSubmit={submit}>
-              <div className="modal-header">
+            <form className="modal-content rounded-4" onSubmit={submit}>
+              <div className="modal-header border-0">
                 <h5 className="modal-title">{editing ? "แก้ไขผู้ใช้" : "เพิ่มผู้ใช้"}</h5>
                 <button type="button" className="btn-close" onClick={() => setShowForm(false)} />
               </div>
-              <div className="modal-body d-flex flex-column gap-2">
+              <div className="modal-body d-flex flex-column gap-2 pt-0">
                 {!editing && (
                   <>
                     <label className="form-label mb-0">รหัส/อีเมล</label>
                     <input
+                      ref={firstInputRef}
                       className="form-control"
                       required
                       placeholder="student@nu.ac.th หรือ รหัสนิสิต"
@@ -321,13 +359,25 @@ export default function ManageUsersPage() {
                 />
 
                 <label className="form-label mb-0">รหัสผ่าน {editing ? "(เว้นว่าง = ไม่เปลี่ยน)" : ""}</label>
-                <input
-                  type="password"
-                  className="form-control"
-                  required={!editing}
-                  value={form.password}
-                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                />
+                <div className="input-group">
+                  <input
+                    type={showPw ? "text" : "password"}
+                    className="form-control"
+                    required={!editing}
+                    value={form.password}
+                    onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === "Enter") (e.target.form)?.requestSubmit(); }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    onClick={() => setShowPw((v) => !v)}
+                    aria-label={showPw ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+                    title={showPw ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+                  >
+                    <i className={`bi ${showPw ? "bi-eye-slash" : "bi-eye"}`} />
+                  </button>
+                </div>
 
                 <label className="form-label mb-0">บทบาท</label>
                 <select
@@ -337,8 +387,7 @@ export default function ManageUsersPage() {
                     setForm((f) => ({
                       ...f,
                       role: e.target.value,
-                      major_id:
-                        e.target.value === "student" || e.target.value === "teacher" ? f.major_id : "",
+                      major_id: (e.target.value === "student" || e.target.value === "teacher") ? f.major_id : "",
                     }))
                   }
                 >
@@ -353,19 +402,16 @@ export default function ManageUsersPage() {
                   value={form.major_id}
                   disabled={!showMajor}
                   onChange={(e) => setForm((f) => ({ ...f, major_id: e.target.value }))}
+                  title={!showMajor ? "เลือกได้เฉพาะบทบาทนิสิต/อาจารย์" : undefined}
                 >
                   <option value="">-</option>
-                  {majors.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
+                  {majors.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </select>
                 {!showMajor && <div className="form-text">เฉพาะบทบาทนิสิต/อาจารย์เท่านั้นที่เลือกสาขาได้</div>}
               </div>
-              <div className="modal-footer">
-                <button className="btn btn-secondary" type="button" disabled={saving} onClick={() => setShowForm(false)}>
-                  ยกเลิก
-                </button>
-                <button className="btn btn-primary" type="submit" disabled={saving}>
+              <div className="modal-footer border-0">
+                <button className="btn btn-secondary rounded-pill" type="button" disabled={saving} onClick={() => setShowForm(false)}>ยกเลิก</button>
+                <button className="btn btn-primary rounded-pill" type="submit" disabled={saving}>
                   {saving && <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />}
                   บันทึก
                 </button>
@@ -374,6 +420,16 @@ export default function ManageUsersPage() {
           </div>
         </div>
       )}
+
+      {/* Local styles */}
+      <style>{`
+        .table > :not(caption) > * > *{ vertical-align: middle; }
+        th[role="button"]{ user-select:none; }
+        .form-control:focus, .form-select:focus{
+          box-shadow: 0 0 0 .2rem rgba(111,66,193,.12);
+          border-color: #8e5cff;
+        }
+      `}</style>
     </div>
   );
 }
