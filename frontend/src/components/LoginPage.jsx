@@ -11,21 +11,25 @@ const LoginPage = () => {
   const navigate = useNavigate();
   const { login, user } = useAuth();
 
-  // ถ้ามีผู้ใช้ค้างใน localStorage ให้เข้าหน้า home เลย
+  // ถ้าเคยล็อกอินไว้แล้ว ให้นำทางตาม role
   useEffect(() => {
-    if (user) navigate("/home");
+    if (!user) return;
+    if (user.role === "admin") navigate("/admin");
+    else if (user.role === "teacher") navigate("/student-info");
+    else navigate("/home");
   }, [user, navigate]);
 
-  // src/components/LoginPage.jsx (เฉพาะฟังก์ชัน handleLogin)
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      const u = await login(username.trim(), password); // ✅ ได้ user กลับมา
+      const u = await login(username.trim(), password); // login() ควร return user object
       if (!u) throw new Error("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง");
 
-      if (u.role === "teacher") navigate("/student-info");
+      // ✅ ใช้ u.role แทน user.role
+      if (u.role === "admin") navigate("/admin");
+      else if (u.role === "teacher") navigate("/student-info");
       else navigate("/home");
     } catch (err) {
       setError(err?.message || "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง");
@@ -50,7 +54,6 @@ const LoginPage = () => {
           zIndex: 999,
         }}
       >
-        {/* ⭐ แนะนำย้ายรูปไปไว้ public/csit.jpg แล้วอ้างด้วย path ด้านล่าง */}
         <img
           src="/src/assets/csit.jpg"
           alt="Logo"

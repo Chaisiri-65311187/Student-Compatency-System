@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import WelcomePage from './components/WelcomePage';
 import LoginPage from './components/LoginPage';
+import AdminDashboard from "./components/admin/AdminDashboard";
 
 
 function App() {
@@ -12,7 +13,7 @@ function App() {
     <Routes>
       <Route path="/" element={<WelcomePage />} />
       <Route path="/login" element={<LoginPage />} />
-    </Routes>
+      <Route path="/admin" element={ <PrivateAdmin> <AdminDashboard /> </PrivateAdmin>}/> </Routes>
   );
 }
 

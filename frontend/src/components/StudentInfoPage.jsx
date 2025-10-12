@@ -5,9 +5,8 @@ import { useAnnouncements } from '../contexts/AnnouncementsContext';
 import { useNavigate } from 'react-router-dom';
 
 const StudentInfoPage = () => {
-  const { user } = useAuth(); // ดึงข้อมูลผู้ใช้จาก AuthContext
+  const { user, logout } = useAuth(); // ดึงข้อมูลผู้ใช้จาก AuthContext
   const { competencyData } = useCompetency(); // ดึงข้อมูลสมรรถนะนิสิตจาก CompetencyContext
-  const { announcements } = useAnnouncements();
   const navigate = useNavigate();
 
   // กรองข้อมูลด้วยตัวกรอง
@@ -62,7 +61,15 @@ const StudentInfoPage = () => {
         <h5 className="text-white fw-bold m-0" style={{ marginLeft: '10px' }}>CSIT Competency System</h5>
         <div className="ms-auto d-flex align-items-center">
           <span className="text-white me-3">{user?.fullName}</span>
-          <button className="btn btn-light btn-sm" onClick={() => navigate('/login')}>ออกจากระบบ</button>
+          <button
+            className="btn btn-light btn-sm"
+            onClick={() => {
+              logout();            // ✅ เคลียร์ข้อมูลผู้ใช้ใน context + localStorage
+              navigate('/login');  // ✅ พาไปหน้าเข้าสู่ระบบ
+            }}
+          >
+            ออกจากระบบ
+          </button>
         </div>
       </div>
 
