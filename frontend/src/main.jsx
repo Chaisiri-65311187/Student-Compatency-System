@@ -16,9 +16,13 @@ import HomePage from "./components/HomePage";
 import AddDataPage from "./components/AddDataPage";
 import StudentInfoPage from "./components/StudentInfoPage";
 import AddAnnouncementPage from "./components/AddAnnouncementPage";
-import EditDataPage from "./components/EditDataPage";
 import AdminDashboard from "./components/admin/AdminDashboard";
 import ManageUsersPage from "./components/admin/ManageUsersPage";
+import CompetencyFormPage from "./components/CompetencyFormPage";
+import StudentProfilePage from "./components/StudentProfilePage";
+import TeacherAnnouncementsPage from "./components/TeacherAnnouncementsPage";
+
+
 
 /** PrivateRoute: บังคับล็อกอิน + (ถ้ามี) ตรวจ role */
 const PrivateRoute = ({ element, roles }) => {
@@ -48,7 +52,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(
               <Route path="/add-data" element={<PrivateRoute element={<AddDataPage />} />} />
               <Route path="/student-info" element={<PrivateRoute element={<StudentInfoPage />} />} />
               <Route path="/create-announcement" element={<PrivateRoute element={<AddAnnouncementPage />} />} />
-              <Route path="/edit" element={<PrivateRoute element={<EditDataPage />} />} />
+              <Route path="/competency/form" element={<CompetencyFormPage />} />
+              <Route path="/profile" element={<PrivateRoute element={<StudentProfilePage />} />} />
+              <Route path="/teacher-announcements" element={<TeacherAnnouncementsPage />} />
 
               {/* ✅ admin-only */}
               <Route
