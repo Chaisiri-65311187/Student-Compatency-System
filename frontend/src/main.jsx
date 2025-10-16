@@ -22,7 +22,7 @@ import StudentProfilePage from "./components/StudentProfilePage";
 import TeacherAnnouncementsPage from "./components/TeacherAnnouncementsPage";
 import EditAnnouncementPage from "./components/EditAnnouncementPage";
 import ApplicantsManagePage from "./components/ApplicantsManagePage";
-
+import AdminContactInbox from "./components/admin/AdminContactInbox";
 
 
 /** PrivateRoute: บังคับล็อกอิน + (ถ้ามี) ตรวจ role */
@@ -58,6 +58,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
               <Route path="/announcements/:id/edit" element={<EditAnnouncementPage mode="edit" />} />
               <Route path="/create-announcement" element={<EditAnnouncementPage mode="create" />} />
               <Route path="/announcements/:id/applicants" element={<ApplicantsManagePage />} />
+              <Route path="/admin/contact-inbox" element={<AdminContactInbox />} />
 
 
               {/* ✅ admin-only */}

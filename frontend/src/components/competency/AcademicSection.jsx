@@ -266,7 +266,7 @@ export default function AcademicSection({ user }){
           <div className="form-text">ดึงจากโปรไฟล์นิสิต</div>
         </div>
         <div className="col-12 col-md-3">
-          <label className="form-label">GPA (กรอกเอง)</label>
+          <label className="form-label">GPAX</label>
           <input
             className="form-control"
             type="number" step="0.01" min="0" max="4"

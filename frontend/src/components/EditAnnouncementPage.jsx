@@ -27,8 +27,8 @@ const StatusBadge = ({ status }) => {
     status === "open"
       ? "badge text-bg-success"
       : status === "closed"
-      ? "badge text-bg-secondary"
-      : "badge text-bg-dark";
+        ? "badge text-bg-secondary"
+        : "badge text-bg-dark";
   const label =
     status === "open" ? "เปิดรับ" : status === "closed" ? "ปิดรับ" : "เก็บถาวร";
   return <span className={cls}>{label}</span>;
@@ -102,12 +102,12 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
             data?.capacity == null
               ? null
               : Math.max(
-                  0,
-                  Number(data.capacity) -
-                    (Number.isFinite(Number(data?.accepted_count))
-                      ? Number(data.accepted_count)
-                      : 0)
-                ),
+                0,
+                Number(data.capacity) -
+                (Number.isFinite(Number(data?.accepted_count))
+                  ? Number(data.accepted_count)
+                  : 0)
+              ),
         });
       } catch (e) {
         console.error(e);
@@ -170,46 +170,28 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
   };
 
   return (
-    <div
-      className="min-vh-100"
-      style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}
-    >
-      {/* Top Bar ให้โทนเดียวกับหน้าอื่น */}
-      <div
-        className="d-flex align-items-center px-3"
-        style={{
-          height: 72,
-          background: "linear-gradient(90deg, #6f42c1, #8e5cff)",
-          boxShadow: "0 4px 14px rgba(111,66,193,.22)",
-          position: "sticky",
-          top: 0,
-          zIndex: 1040,
-        }}
-      >
-        <img
-          src="/src/assets/csit.jpg"
-          alt="Logo"
-          className="rounded-3 me-3"
-          style={{ height: 40, width: 40, objectFit: "cover" }}
-        />
-        <h5 className="text-white fw-semibold m-0">
-          CSIT Competency System — Teacher
-        </h5>
-        <div className="ms-auto">
-          <button
-            className="btn btn-light btn-sm rounded-pill me-2"
-            onClick={() => navigate(-1)}
-          >
-            ← ย้อนกลับ
-          </button>
-          <button
-            className="btn btn-light btn-sm rounded-pill"
-            onClick={() => navigate("/teacher-announcements")}
-          >
-            รายการประกาศของฉัน
-          </button>
+    <div className="min-vh-100 position-relative bg-animated">
+      {/* Decorative background blobs */}
+      <div className="bg-blob bg-blob-1" aria-hidden="true" />
+      <div className="bg-blob bg-blob-2" aria-hidden="true" />
+      <div className="bg-blob bg-blob-3" aria-hidden="true" />
+      {/* Top Bar – ให้เหมือนทุกหน้า */}
+      <div className="hero-bar topbar glassy" style={{ height: 72 }}>
+        <div className="container-xxl d-flex align-items-center h-100">
+          <div className="d-flex align-items-center">
+            <img src="/src/assets/csit.jpg" alt="Logo" className="rounded-3 shadow-sm" style={{ height: 40, width: 40, objectFit: "cover" }} />
+            <div className="ms-3 text-white fw-semibold">CSIT Competency System</div>
+          </div>
+          <div className="ms-auto d-flex align-items-center">
+            <button className="btn btn-light btn-sm rounded-pill ripple" onClick={() => navigate(-1)}>
+              ← ย้อนกลับ
+            </button>
+          </div>
         </div>
       </div>
+
+
+
 
       <div className="container-xxl py-4">
         {/* Header + Actions */}
@@ -517,9 +499,9 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                       {capInfo.capacity == null
                         ? "ไม่จำกัด"
                         : Math.max(
-                            0,
-                            (capInfo.capacity || 0) - (capInfo.accepted_count || 0)
-                          )}
+                          0,
+                          (capInfo.capacity || 0) - (capInfo.accepted_count || 0)
+                        )}
                     </div>
                     <div className="text-muted mt-2">
                       * การเปลี่ยน “จำนวนรับ” ในแบบฟอร์มด้านซ้ายจะบันทึกเป็นค่าใหม่ทันทีเมื่อกด “บันทึกการแก้ไข”
@@ -536,13 +518,84 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
         )}
       </div>
 
-      {/* แต่งโฟกัส/เงาให้กลืนกับหน้าอื่น */}
+      {/* Local styles */}
       <style>{`
-        .form-control:focus, .form-select:focus{
-          box-shadow: 0 0 0 .2rem rgba(111,66,193,.12);
-          border-color: #8e5cff;
+        /* ===== Animated gradient bg & blobs (match Welcome/Login) ===== */
+        .bg-animated {
+          background: radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),
+                      radial-gradient(1000px 500px at 110% 10%, #e6f0ff 10%, transparent 55%),
+                      linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%);
         }
+        .glassy { backdrop-filter: blur(8px); }
+        .topbar { position: sticky; top: 0; left: 0; width: 100%; background: linear-gradient(90deg, rgba(111,66,193,.9), rgba(142,92,255,.9)); box-shadow: 0 4px 16px rgba(111,66,193,.22); z-index: 1040; border-bottom: 1px solid rgba(255,255,255,.12); }
+
+        .glass-card{ backdrop-filter: blur(6px); transition: transform .15s ease, box-shadow .15s ease; }
+        .glass-card:hover{ transform: translateY(-2px); box-shadow: 0 12px 30px rgba(28,39,49,.12)!important; }
+        .line-clamp-3{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+        .chip{ padding:.35rem .75rem; }
+
+        .ratio-21x9{ aspect-ratio:21/9; width:100%; background:transparent; border-radius:1rem 1rem 0 0; overflow:hidden; }
+        .banner-overlay{ position:absolute; inset:0; display:flex; justify-content:space-between; align-items:flex-start; padding:.5rem; pointer-events:none; }
+        .banner-overlay .status-wrap, .banner-overlay .year-pill{ pointer-events:auto; }
+
+        .year-pill{ display:inline-flex; align-items:center; padding:.45rem .9rem; border-radius:9999px; font-weight:700; font-size:.97rem; letter-spacing:.2px; color:#fff; background:linear-gradient(135deg,#0091ff,#6dd5fa); box-shadow:0 6px 18px rgba(0,0,0,.12); border:none; }
+        .year-pill.year2{ background:linear-gradient(135deg,#6a11cb,#2575fc); }
+        .year-pill.year3{ background:linear-gradient(135deg,#f7971e,#ffd200); color:#222; }
+        .year-pill.year4{ background:linear-gradient(135deg,#ff416c,#ff4b2b); }
+        .banner-overlay .badge{ font-size:.85rem; padding:.38rem .6rem; }
+
+        /* Ripple */
+        .ripple { position: relative; overflow: hidden; }
+        .ripple:after { content: ""; position: absolute; inset: 0; border-radius: inherit; opacity: 0; background: radial-gradient(circle at var(--x,50%) var(--y,50%), rgba(255,255,255,.45), transparent 40%); transform: scale(0.2); transition: transform .3s, opacity .45s; pointer-events: none; }
+        .ripple:active:after { opacity: 1; transform: scale(1); transition: 0s; }
+        .ripple { --x: 50%; --y: 50%; }
+        .ripple:focus-visible { outline: 3px solid rgba(142,92,255,.45); outline-offset: 2px; }
+
+        /* Background blobs */
+html, body {
+  overflow-x: hidden;
+}
+
+/* ป้องกัน blob ล้นจอ */
+.bg-blob {
+  position: absolute;
+  filter: blur(60px);
+  opacity: .55;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  max-width: 100vw;
+  will-change: transform;
+}
+
+/* ให้ container หลักไม่ล้น */
+.bg-animated {
+  overflow-x: hidden;
+  width: 100%;
+  max-width: 100vw;
+}
+
+.bg-blob-1{ width:420px; height:420px; left:-120px; top:-80px;  background:#d7c6ff; animation:drift1 18s ease-in-out infinite; }
+.bg-blob-2{ width:360px; height:360px; right:-120px; top:120px; background:#c6ddff; animation:drift2 22s ease-in-out infinite; }
+.bg-blob-3{ width:300px; height:300px; left:15%; bottom:-120px; background:#ffd9ec; animation:drift3 20s ease-in-out infinite; }
+
+@keyframes drift1{ 0%,100%{transform:translate(0,0)} 50%{transform:translate(20px,10px)} }
+@keyframes drift2{ 0%,100%{transform:translate(0,0)} 50%{transform:translate(-16px,8px)} }
+@keyframes drift3{ 0%,100%{transform:translate(0,0)} 50%{transform:translate(12px,-12px)} }
+
       `}</style>
+
+      {/* tiny script to position ripple center under cursor */}
+      <script dangerouslySetInnerHTML={{
+        __html: `
+        document.addEventListener('pointerdown', (e) => {
+          const el = e.target.closest('.ripple');
+          if (!el) return;
+          const rect = el.getBoundingClientRect();
+          el.style.setProperty('--x', ((e.clientX - rect.left) / rect.width * 100).toFixed(2) + '%');
+          el.style.setProperty('--y', ((e.clientY - rect.top) / rect.height * 100).toFixed(2) + '%');
+        }, { passive: true });
+      `}} />
     </div>
   );
 }

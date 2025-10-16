@@ -1,6 +1,6 @@
 // src/contexts/AuthContext.jsx
 import React, { createContext, useState, useContext, useEffect } from "react";
-import { loginUser } from "../services/api"; // ฟังก์ชันเรียก backend (เราจะทำต่อให้ข้างล่าง)
+import { loginUser } from "../services/api"; // เรียก backend
 
 const AuthContext = createContext();
 export const useAuth = () => useContext(AuthContext);
@@ -8,32 +8,49 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
 
-  // ✅ โหลดสถานะผู้ใช้จาก localStorage (กันหลุดหลังรีเฟรช)
+  // ✅ โหลดสถานะผู้ใช้จาก sessionStorage (จะหายเมื่อปิดแท็บ/ปิดเบราว์เซอร์)
   useEffect(() => {
-    const savedUser = localStorage.getItem("user");
+    const savedUser = sessionStorage.getItem("user");
     if (savedUser) setUser(JSON.parse(savedUser));
   }, []);
 
-  // ✅ ฟังก์ชัน login (เชื่อม backend)
+  // ✅ login
   const login = async (username, password) => {
     try {
       const res = await loginUser(username.trim(), password);
       if (res && res.user) {
         setUser(res.user);
-        localStorage.setItem("user", JSON.stringify(res.user));
-        return res.user; // ✅ ส่ง user กลับ ไม่ใช่ boolean
+        // ใช้ sessionStorage แทน localStorage
+        sessionStorage.setItem("user", JSON.stringify(res.user));
+        return res.user;
       }
       return null;
     } catch (err) {
-      throw err; // ให้โยน error ออกไป เพื่อให้หน้า Login จับข้อความได้
+      throw err;
     }
   };
 
   // ✅ logout
   const logout = () => {
     setUser(null);
-    localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
+    // (ถ้ามี cookie-based session ให้แจ้ง backend logout ด้วย)
+    try {
+      fetch("/api/logout", { method: "POST", credentials: "include" });
+    } catch {}
   };
+
+  // ✅ เมื่อปิดแท็บ / ปิดเบราว์เซอร์ → ล้าง session อัตโนมัติ
+  useEffect(() => {
+    const handleUnload = () => {
+      sessionStorage.removeItem("user");
+      try {
+        navigator.sendBeacon?.("/api/logout"); // แจ้ง backend แบบเบาๆ
+      } catch {}
+    };
+    window.addEventListener("beforeunload", handleUnload);
+    return () => window.removeEventListener("beforeunload", handleUnload);
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, login, logout }}>

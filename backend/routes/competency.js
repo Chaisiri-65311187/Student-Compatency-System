@@ -104,20 +104,37 @@ router.get("/ping", (req, res) => res.json({ ok: true, scope: "competency" }));
 router.get("/profile/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
   if (!accountId) return res.status(400).json({ message: "invalid accountId" });
+
   try {
+    // ✅ ดึงข้อมูลโปรไฟล์ + ช่องทางติดต่อครบ
     const [[acct]] = await pool.query(
-      `SELECT id, username, full_name, major_id, year_level, manual_gpa
-       FROM accounts WHERE id=?`,
+      `SELECT 
+         id, username, full_name, first_name, last_name,
+         major_id, year_level, manual_gpa,
+         avatar_url, email, phone, line_id, facebook, github
+       FROM accounts 
+       WHERE id=?`,
       [accountId]
     );
+
     if (!acct) return res.status(404).json({ message: "account not found" });
+
+    // ✅ ทำให้ URL รูปโปรไฟล์เป็นลิงก์เต็ม (ไม่งั้น React จะโหลดไม่เจอ)
+    if (acct.avatar_url && !acct.avatar_url.startsWith("http")) {
+      acct.avatar_url = `${req.protocol}://${req.get("host")}${acct.avatar_url}`;
+    }
+
     const computed_gpa = await computeGPA(accountId);
-    res.json({ account: acct, computed_gpa });
+
+    res.json({
+      account: acct,
+      computed_gpa,
+    });
   } catch (e) {
     console.error("GET /profile error", e);
     res.status(500).json({ message: "Server error" });
   }
-});
+});;
 
 router.put("/profile/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
@@ -177,8 +194,8 @@ router.get("/courses/grades/:accountId", async (req, res) => {
   try {
     const params = [accountId];
     let filter = "scg.account_id = ?";
-    if (year) { filter += " AND scg.taken_year = ?";     params.push(Number(year)); }
-    if (sem)  { filter += " AND scg.taken_semester = ?"; params.push(Number(sem)); }
+    if (year) { filter += " AND scg.taken_year = ?"; params.push(Number(year)); }
+    if (sem) { filter += " AND scg.taken_semester = ?"; params.push(Number(sem)); }
 
     const sql = `
       SELECT scg.id, scg.course_id, scg.letter, scg.taken_year, scg.taken_semester,
@@ -193,7 +210,7 @@ router.get("/courses/grades/:accountId", async (req, res) => {
             AND scg2.course_id  = scg.course_id
             AND scg2.id         > scg.id
             ${year ? " AND scg2.taken_year = scg.taken_year" : ""}
-            ${sem  ? " AND scg2.taken_semester = scg.taken_semester" : ""}
+            ${sem ? " AND scg2.taken_semester = scg.taken_semester" : ""}
         )
       ORDER BY cc.code ASC
     `;
@@ -384,7 +401,7 @@ router.post("/activities", async (req, res) => {
        (account_id, category, subtype, title, role, hours, date_from, date_to, proof_url)
        VALUES (?,?,?,?,?,?,?,?,?)`,
       [account_id, category, subtype ?? null, title, role ?? null, hours ?? null,
-       date_from ?? null, date_to ?? null, proof_url ?? null]
+        date_from ?? null, date_to ?? null, proof_url ?? null]
     );
     res.json({ ok: true });
   } catch (e) {

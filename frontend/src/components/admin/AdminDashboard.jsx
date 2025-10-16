@@ -1,4 +1,4 @@
-// src/pages/admin/AdminDashboard.jsx
+// src/pages/admin/AdminDashboard.jsx — welcome-themed (no feature removed)
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
@@ -38,13 +38,32 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState("");
 
-  // fetch data
+  // ===== API base (ให้ตรง backend ปัจจุบัน) =====
+  const API = (import.meta.env.VITE_API_BASE || "http://localhost:3000").replace(/\/+$/, "");
+
+  // 📨 นับข้อความใหม่ในกล่องข้อความ (public contact form)
+  const [unreadCount, setUnreadCount] = useState(0);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const fetchUnread = async () => {
+      try {
+        const res = await fetch(`${API}/api/contact`, { signal: ctrl.signal });
+        if (!res.ok) throw new Error("contact " + res.status);
+        const data = await res.json();
+        const count = (data.items || []).filter((m) => m.status === "new").length;
+        setUnreadCount(count);
+      } catch (_) { /* ignore */ }
+    };
+    fetchUnread();
+    const t = setInterval(fetchUnread, 30000);
+    return () => { clearInterval(t); ctrl.abort(); };
+  }, [API]);
+
+  // fetch data (overview + recent users)
   useEffect(() => {
     if (user?.role !== "admin") return;
 
-    const API = (import.meta.env.VITE_API_BASE || "http://localhost:5000").replace(/\/+$/, "");
     const ctrl = new AbortController();
-
     (async () => {
       setLoading(true);
       setLoadErr("");
@@ -71,7 +90,7 @@ const AdminDashboard = () => {
     })();
 
     return () => ctrl.abort();
-  }, [user]);
+  }, [user, API]);
 
   const handleLogout = () => {
     logout?.();
@@ -83,8 +102,8 @@ const AdminDashboard = () => {
     r === "admin"
       ? "badge text-bg-danger"
       : r === "teacher"
-      ? "badge text-bg-primary"
-      : "badge text-bg-secondary";
+        ? "badge text-bg-primary"
+        : "badge text-bg-secondary";
 
   // simple search in table (ตามชื่อ/รหัส)
   const [q, setQ] = useState("");
@@ -99,30 +118,41 @@ const AdminDashboard = () => {
   }, [recentUsers, q]);
 
   return (
-    <div className="min-vh-100" style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}>
-      {/* Top Bar */}
-      <div
-        className="d-flex align-items-center px-3"
-        style={{
-          height: 72,
-          background: "linear-gradient(90deg, #6f42c1, #8e5cff)",
-          boxShadow: "0 4px 14px rgba(111,66,193,.22)",
-        }}
-      >
-        <img
-          src="/src/assets/csit.jpg"
-          alt="Logo"
-          className="rounded-3 me-3"
-          style={{ height: 40, width: 40, objectFit: "cover" }}
-        />
-        <h5 className="text-white fw-semibold m-0">CSIT Competency System — Admin</h5>
-        <div className="ms-auto d-flex align-items-center">
-          <span className="text-white-50 me-3">
-            {user ? `${user.username} ${user.fullName || user.full_name || ""}` : ""}
-          </span>
-          <button className="btn btn-light btn-sm rounded-pill" onClick={handleLogout}>
-            ออกจากระบบ
-          </button>
+    <div className="page-wrap bg-welcome-rich">
+      {/* Top Bar — Welcome theme */}
+      <div className="welcome-topbar d-flex align-items-center">
+        <div className="container-xxl h-100 d-flex align-items-center px-3">
+          <img
+            src="/src/assets/csit.jpg"
+            alt="Logo"
+            className="rounded-3 me-3"
+            style={{ height: 40, width: 40, objectFit: "cover" }}
+          />
+          <h5 className="text-white fw-semibold m-0">CSIT Competency System — Admin</h5>
+          <div className="ms-auto d-flex align-items-center gap-2">
+            {/* ปุ่มไปกล่องข้อความ + badge จำนวนใหม่ */}
+            <button
+              type="button"
+              className="btn btn-light position-relative rounded-circle p-2"
+              title="กล่องข้อความ (จากหน้า Welcome)"
+              onClick={() => navigate("/admin/contact-inbox")}
+            >
+              <i className="bi bi-envelope-fill text-primary fs-5"></i>
+              {unreadCount > 0 && (
+                <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                  style={{ fontSize: ".65rem", boxShadow: "0 0 0 2px #fff" }}>
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+
+            <span className="text-white-50 me-2">
+              {user ? `${user.username} ${user.fullName || user.full_name || ""}` : ""}
+            </span>
+            <button className="btn btn-light btn-sm rounded-pill" onClick={handleLogout}>
+              ออกจากระบบ
+            </button>
+          </div>
         </div>
       </div>
 
@@ -144,9 +174,9 @@ const AdminDashboard = () => {
             <Link to="/admin/users" className="btn btn-outline-dark rounded-3">
               <i className="bi bi-people me-1"></i> จัดการผู้ใช้
             </Link>
-            {/* <Link to="/admin/announcements" className="btn btn-outline-primary rounded-3">
-              <i className="bi bi-megaphone me-1"></i> จัดการประกาศ
-            </Link> */}
+            <Link to="/admin/contact-inbox" className="btn btn-outline-primary rounded-3">
+              <i className="bi bi-envelope me-1"></i> กล่องข้อความ {unreadCount > 0 ? `(${unreadCount})` : ""}
+            </Link>
           </div>
         </div>
 
@@ -219,8 +249,16 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      {/* Local styles */}
+      {/* Welcome theme styles */}
       <style>{`
+        .page-wrap{ min-height:100svh; }
+        .bg-welcome{ background: linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%); }
+        .welcome-topbar{
+          height:72px;
+          background: linear-gradient(90deg, #6f42c1, #8e5cff);
+          box-shadow: 0 4px 14px rgba(111,66,193,.22);
+          position: sticky; top:0; z-index:1040;
+        }
         .kpi{
           border: 0; border-radius: 1rem;
           background: #fff; box-shadow: 0 6px 20px rgba(28,39,49,.06);
@@ -236,6 +274,10 @@ const AdminDashboard = () => {
         }
         .table > :not(caption) > * > *{
           vertical-align: middle;
+        }
+        .form-control:focus{
+          box-shadow: 0 0 0 .2rem rgba(111,66,193,.12);
+          border-color: #8e5cff;
         }
       `}</style>
     </div>
@@ -283,7 +325,51 @@ const SkeletonTable = () => (
         ))}
       </tbody>
     </table>
+
+    <style>{`
+  html, body, #root { background: transparent!important; }
+  .page-wrap{ min-height:100svh; }
+  .bg-welcome-rich{
+    background:
+      radial-gradient(1200px 600px at 8% -8%,  #efe7ff 14%, transparent 60%),
+      radial-gradient(1000px 520px at 110% 6%, #e6f0ff 12%, transparent 55%),
+      radial-gradient(900px 420px at 18% 96%,  #ffe3ef 12%, transparent 58%),
+      linear-gradient(180deg,#f7f7fb 0%, #eef1f7 100%);
+    background-attachment: fixed, fixed, fixed, fixed;
+  }
+
+  .welcome-topbar{
+    height:72px;
+    background: linear-gradient(90deg,#6f42c1,#8e5cff);
+    box-shadow: 0 4px 14px rgba(111,66,193,.22);
+    position: sticky;
+    top: 0;
+    z-index: 1040;
+  }
+
+  .form-control:focus, .form-select:focus{
+    box-shadow: 0 0 0 .2rem rgba(111,66,193,.12);
+    border-color: #8e5cff;
+  }
+
+  .table-success-subtle { background-color: rgba(25,135,84,.05); }
+  .table-danger-subtle  { background-color: rgba(220,53,69,.05); }
+
+  .kpi{
+    border: 0; border-radius: 1rem;
+    background: #fff; box-shadow: 0 6px 20px rgba(28,39,49,.06);
+  }
+  .kpi .icon{
+    width: 44px; height: 44px; border-radius: 10px;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(111,66,193,.1); color:#6f42c1;
+  }
+  .kpi .value{ font-size: 1.75rem; font-weight: 700; }
+`}</style>
+
   </div>
 );
+
+
 
 export default AdminDashboard;

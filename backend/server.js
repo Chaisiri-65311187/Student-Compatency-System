@@ -33,7 +33,7 @@ function loadRouter(modPath) {
   process.exit(1);
 }
 
-
+const contactRouter = require("./routes/contact");
 
 /* ====== Mount routes ====== */
 app.use("/api", loadRouter("./routes/auth"));
@@ -42,6 +42,9 @@ app.use("/api/admin", loadRouter("./routes/admin"));
 app.use("/api/competency", loadRouter("./routes/competency")); // <- ตรวจให้ตรงชื่อไฟล์
 app.use("/api/announcements", loadRouter("./routes/announcements"));
 app.use("/api/majors", loadRouter("./routes/majors"));
+app.use("/api/accounts", loadRouter("./routes/accounts")); // ✅ route โปรไฟล์
+app.use("/uploads", express.static(require("path").join(__dirname, "uploads"))); // ✅ เสิร์ฟไฟล์รูป
+app.use("/api/contact", contactRouter);
 
 /* ====== Health ====== */
 app.get("/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
