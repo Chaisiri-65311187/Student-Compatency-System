@@ -45,7 +45,7 @@ const timeHM = (t) => {
         hour12: false,
       });
     }
-  } catch {}
+  } catch { }
   return String(t).slice(0, 5);
 };
 const rangeLine = (p) => {
@@ -83,6 +83,7 @@ export default function HomePage() {
   const [loadErr, setLoadErr] = useState("");
 
   // สมัครของฉัน
+  // appliedMap: { [announcement_id]: { status: 'pending'|'accepted' } }
   const [appliedMap, setAppliedMap] = useState({});
 
   // Auth / nav
@@ -92,6 +93,33 @@ export default function HomePage() {
   // Modal
   const [showModal, setShowModal] = useState(false);
   const [selectedAnnouncement, setSelectedAnnouncement] = useState(null);
+
+  // ===== แจ้งเตือน =====
+  const NOTI_KEY = "notif_seen_v1"; // localStorage key
+  const [notiOpen, setNotiOpen] = useState(false);
+  const [notifItems, setNotifItems] = useState([]); // [{id, announcement_id, title, when}]
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // map id -> title (ไว้โชว์ชื่อประกาศในแจ้งเตือน)
+  const annTitleById = useMemo(() => {
+    const m = {};
+    (announcements || []).forEach((a) => {
+      m[a.id] = a.title;
+    });
+    return m;
+  }, [announcements]);
+
+  const loadSeen = () => {
+    try {
+      const s = JSON.parse(localStorage.getItem(NOTI_KEY) || "[]");
+      return new Set(s.map(String));
+    } catch {
+      return new Set();
+    }
+  };
+  const saveSeen = (idsSet) => {
+    localStorage.setItem(NOTI_KEY, JSON.stringify(Array.from(idsSet)));
+  };
 
   // โหลดประกาศ
   useEffect(() => {
@@ -103,10 +131,10 @@ export default function HomePage() {
         const rows = Array.isArray(data)
           ? data
           : Array.isArray(data?.rows)
-          ? data.rows
-          : Array.isArray(data?.items)
-          ? data.items
-          : [];
+            ? data.rows
+            : Array.isArray(data?.items)
+              ? data.items
+              : [];
         setAnnouncements(
           rows.map((r) => {
             const rawCap = r.capacity ?? r.seats;
@@ -115,7 +143,8 @@ export default function HomePage() {
             const accepted = Number.isFinite(Number(r.accepted_count))
               ? Number(r.accepted_count)
               : 0;
-            const remaining = capacity == null ? null : Math.max(0, capacity - accepted);
+            const remaining =
+              capacity == null ? null : Math.max(0, capacity - accepted);
             return {
               id: r.id,
               title: r.title,
@@ -128,8 +157,8 @@ export default function HomePage() {
               work_periods: Array.isArray(r.work_periods)
                 ? r.work_periods
                 : Array.isArray(r.periods)
-                ? r.periods
-                : [],
+                  ? r.periods
+                  : [],
               deadline: r.deadline || null,
               status: r.status || "open",
               location: r.location || "",
@@ -148,25 +177,76 @@ export default function HomePage() {
     run();
   }, []);
 
-  // โหลด “ประกาศที่ฉันสมัคร”
+  // โหลด “ประกาศที่ฉันสมัคร” + คำนวณแจ้งเตือน
   useEffect(() => {
     if (!user?.id) return;
+    let alive = true;
+
+    const buildNotifs = (apps) =>
+      apps
+        .filter((x) => x.status === "accepted")
+        .map((x) => ({
+          id: String(x.id), // application id
+          announcement_id: x.announcement_id,
+          title: annTitleById[x.announcement_id] || `ประกาศ #${x.announcement_id}`,
+          when: x.updated_at || x.approved_at || x.created_at || null,
+        }));
+
     (async () => {
       try {
         const data = await listMyApplications(user.id);
         const items = Array.isArray(data) ? data : data?.items || [];
+
+        // map สำหรับปุ่ม สมัคร/ถอน
         const map = {};
         items.forEach((x) => {
           if (x.status === "pending" || x.status === "accepted") {
             map[x.announcement_id] = { status: x.status };
           }
         });
+
+        // แจ้งเตือน
+        const notifs = buildNotifs(items);
+        const seen = loadSeen();
+        const unread = notifs.filter((n) => !seen.has(n.id)).length;
+
+        if (!alive) return;
         setAppliedMap(map);
+        setNotifItems(notifs);
+        setUnreadCount(unread);
       } catch {
         /* ignore */
       }
     })();
-  }, [user?.id]);
+
+    return () => {
+      alive = false;
+    };
+  }, [user?.id, annTitleById]);
+
+  // Poll แจ้งเตือนทุก 30 วิ
+  useEffect(() => {
+    if (!user?.id) return;
+    const timer = setInterval(async () => {
+      try {
+        const data = await listMyApplications(user.id);
+        const items = Array.isArray(data) ? data : data?.items || [];
+        const notifs = items
+          .filter((x) => x.status === "accepted")
+          .map((x) => ({
+            id: String(x.id),
+            announcement_id: x.announcement_id,
+            title:
+              annTitleById[x.announcement_id] || `ประกาศ #${x.announcement_id}`,
+            when: x.updated_at || x.approved_at || x.created_at || null,
+          }));
+        const seen = loadSeen();
+        setNotifItems(notifs);
+        setUnreadCount(notifs.filter((n) => !seen.has(n.id)).length);
+      } catch { }
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [user?.id, annTitleById]);
 
   // Client filter
   const filteredAnnouncements = useMemo(() => {
@@ -227,7 +307,8 @@ export default function HomePage() {
     <button
       type="button"
       onClick={onClick}
-      className={`btn btn-sm me-2 mb-2 ${active ? "btn-primary" : "btn-outline-secondary"} chip`}
+      className={`btn btn-sm me-2 mb-2 ${active ? "btn-primary" : "btn-outline-secondary"
+        } chip`}
       style={{ borderRadius: 999 }}
     >
       {children}
@@ -263,6 +344,11 @@ export default function HomePage() {
   const onApply = async (ann) => {
     if (!user?.id) {
       alert("กรุณาเข้าสู่ระบบนิสิตก่อนสมัคร");
+      return;
+    }
+    // กันสมัครเมื่อเต็ม (ถ้าแสดงผลผิดพลาด)
+    if (ann?.capacity != null && (ann?.remaining ?? 0) <= 0) {
+      alert("ประกาศนี้เต็มแล้ว ไม่สามารถสมัครได้");
       return;
     }
     try {
@@ -301,6 +387,16 @@ export default function HomePage() {
     }
   };
 
+  // แจ้งเตือน: action
+  const markAllRead = () => {
+    const seen = loadSeen();
+    notifItems.forEach((n) => seen.add(n.id));
+    saveSeen(seen);
+    setUnreadCount(0);
+  };
+  const toggleNoti = () => setNotiOpen((v) => !v);
+  const closeNotiPanel = () => setNotiOpen(false);
+
   return (
     <div
       className="min-vh-100"
@@ -326,13 +422,103 @@ export default function HomePage() {
               className="rounded-3"
               style={{ height: 40, width: 40, objectFit: "cover" }}
             />
-            <div className="ms-3 text-white fw-semibold">CSIT Competency System</div>
-          </div>
-          <div className="ms-auto d-flex align-items-center gap-2">
-            <div className="text-white-50 d-none d-md-block">
-              {user ? `${user.username} ${user.full_name || user.fullName || ""}` : "ไม่พบผู้ใช้"}
+            <div className="ms-3 text-white fw-semibold">
+              CSIT Competency System
             </div>
-            <button className="btn btn-light btn-sm rounded-pill" onClick={handleLogout}>
+          </div>
+          <div className="ms-auto d-flex align-items-center gap-2 position-relative">
+            <div className="text-white-50 d-none d-md-block">
+              {user
+                ? `${user.username} ${user.full_name || user.fullName || ""}`
+                : "ไม่พบผู้ใช้"}
+            </div>
+            {/* 🔔 Bell Icon */}
+            <button
+              type="button"
+              className="btn btn-link text-white position-relative p-0 me-1"
+              onClick={toggleNoti}
+              title="การแจ้งเตือน"
+              style={{ fontSize: 20, lineHeight: 1 }}
+            >
+              <i className="bi bi-bell"></i>
+              {unreadCount > 0 && (
+                <span
+                  className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                  style={{ fontSize: "0.7rem" }}
+                >
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+
+            {/* แผงแจ้งเตือน */}
+            {notiOpen && (
+              <div
+                className="card shadow border-0 rounded-3"
+                style={{
+                  position: "absolute",
+                  right: 100,
+                  top: "110%",
+                  width: 360,
+                  zIndex: 2000,
+                }}
+                onMouseLeave={closeNotiPanel}
+              >
+                <div className="card-header d-flex justify-content-between align-items-center py-2">
+                  <div className="fw-semibold">การแจ้งเตือน</div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-secondary rounded-pill"
+                    onClick={markAllRead}
+                    disabled={unreadCount === 0}
+                  >
+                    อ่านทั้งหมดแล้ว
+                  </button>
+                </div>
+                <div
+                  className="list-group list-group-flush"
+                  style={{ maxHeight: 360, overflowY: "auto" }}
+                >
+                  {notifItems.length === 0 ? (
+                    <div className="text-muted small text-center py-3">
+                      ไม่มีการแจ้งเตือน
+                    </div>
+                  ) : (
+                    notifItems.map((n) => {
+                      const seen = loadSeen().has(n.id);
+                      return (
+                        <div key={n.id} className="list-group-item">
+                          <div className="d-flex">
+                            <div className="me-2">
+                              <i
+                                className={`bi ${seen ? "bi-check-circle" : "bi-dot"
+                                  } fs-5`}
+                              />
+                            </div>
+                            <div className="flex-grow-1">
+                              <div className="fw-semibold">ได้รับการอนุมัติ</div>
+                              <div className="small">
+                                <span className="text-muted">ประกาศ:</span>{" "}
+                                {n.title}
+                              </div>
+                              <div className="small text-muted">
+                                เวลา: {n.when ? dateTH(n.when) : "-"}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+
+            <button
+              className="btn btn-light btn-sm rounded-pill"
+              onClick={handleLogout}
+            >
               ออกจากระบบ
             </button>
           </div>
@@ -343,32 +529,45 @@ export default function HomePage() {
         <div className="row g-4">
           {/* Sidebar Filters */}
           <div className="col-12 col-xl-3">
-            <div className="card border-0 shadow-sm rounded-4" style={{ position: "sticky", top: 96 }}>
+            <div
+              className="card border-0 shadow-sm rounded-4"
+              style={{ position: "sticky", top: 96 }}
+            >
               <div className="card-body">
-                <div className="small text-uppercase text-muted fw-semibold mb-2">ตัวกรอง</div>
+                <div className="small text-uppercase text-muted fw-semibold mb-2">
+                  ตัวกรอง
+                </div>
                 <div className="mb-3">
                   <div className="small text-muted mb-1">ชั้นปี</div>
                   <Chip
                     active={filterYear.year1}
-                    onClick={() => setFilterYear((p) => ({ ...p, year1: !p.year1 }))}
+                    onClick={() =>
+                      setFilterYear((p) => ({ ...p, year1: !p.year1 }))
+                    }
                   >
                     ปี 1
                   </Chip>
                   <Chip
                     active={filterYear.year2}
-                    onClick={() => setFilterYear((p) => ({ ...p, year2: !p.year2 }))}
+                    onClick={() =>
+                      setFilterYear((p) => ({ ...p, year2: !p.year2 }))
+                    }
                   >
                     ปี 2
                   </Chip>
                   <Chip
                     active={filterYear.year3}
-                    onClick={() => setFilterYear((p) => ({ ...p, year3: !p.year3 }))}
+                    onClick={() =>
+                      setFilterYear((p) => ({ ...p, year3: !p.year3 }))
+                    }
                   >
                     ปี 3
                   </Chip>
                   <Chip
                     active={filterYear.year4}
-                    onClick={() => setFilterYear((p) => ({ ...p, year4: !p.year4 }))}
+                    onClick={() =>
+                      setFilterYear((p) => ({ ...p, year4: !p.year4 }))
+                    }
                   >
                     ปี 4
                   </Chip>
@@ -377,13 +576,17 @@ export default function HomePage() {
                   <div className="small text-muted mb-1">สาขา</div>
                   <Chip
                     active={filterDepartment.cs}
-                    onClick={() => setFilterDepartment((p) => ({ ...p, cs: !p.cs }))}
+                    onClick={() =>
+                      setFilterDepartment((p) => ({ ...p, cs: !p.cs }))
+                    }
                   >
                     วิทยาการคอมพิวเตอร์
                   </Chip>
                   <Chip
                     active={filterDepartment.it}
-                    onClick={() => setFilterDepartment((p) => ({ ...p, it: !p.it }))}
+                    onClick={() =>
+                      setFilterDepartment((p) => ({ ...p, it: !p.it }))
+                    }
                   >
                     เทคโนโลยีสารสนเทศ
                   </Chip>
@@ -399,7 +602,10 @@ export default function HomePage() {
             <div className="card border-0 shadow-sm rounded-4 mb-3">
               <div className="card-body d-flex flex-wrap gap-2 align-items-center">
                 <h4 className="mb-0 me-auto">ประกาศรับสมัครจากอาจารย์</h4>
-                <div className="position-relative me-2 flex-grow-1 flex-md-grow-0" style={{ minWidth: 260 }}>
+                <div
+                  className="position-relative me-2 flex-grow-1 flex-md-grow-0"
+                  style={{ minWidth: 260 }}
+                >
                   <input
                     type="text"
                     className="form-control rounded-pill ps-3"
@@ -431,12 +637,16 @@ export default function HomePage() {
                 ))}
               </div>
             ) : loadErr ? (
-              <div className="alert alert-danger rounded-4">เกิดข้อผิดพลาด: {loadErr}</div>
+              <div className="alert alert-danger rounded-4">
+                เกิดข้อผิดพลาด: {loadErr}
+              </div>
             ) : filteredAnnouncements.length === 0 ? (
               <div className="text-center py-5 card border-0 shadow-sm rounded-4">
                 <div className="card-body">
                   <h5 className="mb-1">ไม่พบประกาศที่ตรงกับการค้นหา</h5>
-                  <div className="text-muted">ลองลบตัวกรองหรือเปลี่ยนคำค้นหา</div>
+                  <div className="text-muted">
+                    ลองลบตัวกรองหรือเปลี่ยนคำค้นหา
+                  </div>
                 </div>
               </div>
             ) : (
@@ -456,7 +666,11 @@ export default function HomePage() {
                           }}
                         >
                           <div className="banner-overlay">
-                            {item.year && <span className={`year-pill year${item.year}`}>ปี {item.year}</span>}
+                            {item.year && (
+                              <span className={`year-pill year${item.year}`}>
+                                ปี {item.year}
+                              </span>
+                            )}
                             <span className="status-wrap">
                               <StatusBadge status={item.status} />
                             </span>
@@ -469,7 +683,9 @@ export default function HomePage() {
                           </h5>
                           <div className="text-muted small mb-2">
                             อาจารย์ผู้รับผิดชอบ:{" "}
-                            <span className="text-dark fw-semibold">{item.teacher}</span>
+                            <span className="text-dark fw-semibold">
+                              {item.teacher}
+                            </span>
                           </div>
 
                           {/* จำนวนรับ */}
@@ -480,7 +696,8 @@ export default function HomePage() {
                           </div>
 
                           {/* ช่วงวันที่ทำงาน */}
-                          {Array.isArray(item.work_periods) && item.work_periods.length > 0 ? (
+                          {Array.isArray(item.work_periods) &&
+                            item.work_periods.length > 0 ? (
                             <div className="small mb-2">
                               <div className="text-muted">ช่วงวันที่ทำงาน:</div>
                               {item.work_periods.map((p, i) => (
@@ -492,7 +709,9 @@ export default function HomePage() {
                               <span className="text-muted">ช่วงวันที่ทำงาน:</span>{" "}
                               <span className="fw-medium">
                                 {item.work_end && item.work_end !== item.work_date
-                                  ? `${dateTH(item.work_date)} – ${dateTH(item.work_end)}`
+                                  ? `${dateTH(item.work_date)} – ${dateTH(
+                                    item.work_end
+                                  )}`
                                   : dateTH(item.work_date)}
                               </span>
                             </div>
@@ -501,20 +720,30 @@ export default function HomePage() {
                           {/* deadline / department / location */}
                           {item.deadline && (
                             <div className="small mb-1">
-                              <span className="text-muted">วันปิดรับสมัคร:</span>{" "}
-                              <span className="fw-medium">{formatDateTH(item.deadline)}</span>
+                              <span className="text-muted">
+                                วันปิดรับสมัคร:
+                              </span>{" "}
+                              <span className="fw-medium">
+                                {formatDateTH(item.deadline)}
+                              </span>
                             </div>
                           )}
                           <div className="small mb-1">
                             <span className="text-muted">สาขา:</span>{" "}
-                            <span className="fw-medium">{item.department || "-"}</span>
+                            <span className="fw-medium">
+                              {item.department || "-"}
+                            </span>
                           </div>
                           {item.location && (
-                            <div className="small text-muted mb-2">สถานที่: {item.location}</div>
+                            <div className="small text-muted mb-2">
+                              สถานที่: {item.location}
+                            </div>
                           )}
 
                           {item.description && (
-                            <p className="text-muted mb-3 line-clamp-3">{item.description}</p>
+                            <p className="text-muted mb-3 line-clamp-3">
+                              {item.description}
+                            </p>
                           )}
 
                           <div className="mt-auto d-flex gap-2">
@@ -542,7 +771,9 @@ export default function HomePage() {
                             )}
                           </div>
                           {myApply && (
-                            <div className="small text-muted mt-2">สถานะการสมัคร: {myApply.status}</div>
+                            <div className="small text-muted mt-2">
+                              สถานะการสมัคร: {myApply.status}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -572,14 +803,22 @@ export default function HomePage() {
             <div className="modal-content rounded-4">
               <div className="modal-header border-0">
                 <h5 className="modal-title">{selectedAnnouncement.title}</h5>
-                <button type="button" className="btn-close" onClick={closeModal}></button>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={closeModal}
+                ></button>
               </div>
 
               <div className="modal-body pt-0">
                 <div className="row g-3">
                   <div className="col-md-6">
-                    <div className="small text-muted mb-1">อาจารย์ผู้รับผิดชอบ</div>
-                    <div className="fw-medium">{selectedAnnouncement.teacher}</div>
+                    <div className="small text-muted mb-1">
+                      อาจารย์ผู้รับผิดชอบ
+                    </div>
+                    <div className="fw-medium">
+                      {selectedAnnouncement.teacher}
+                    </div>
                   </div>
                   <div className="col-md-6">
                     <div className="small text-muted mb-1">สถานะ</div>
@@ -589,7 +828,7 @@ export default function HomePage() {
                   <div className="col-12">
                     <div className="small text-muted mb-1">ช่วงวันที่ทำงาน</div>
                     {Array.isArray(selectedAnnouncement.work_periods) &&
-                    selectedAnnouncement.work_periods.length > 0 ? (
+                      selectedAnnouncement.work_periods.length > 0 ? (
                       <div className="fw-normal">
                         {selectedAnnouncement.work_periods.map((p, i) => (
                           <div key={i}>• {rangeLine(p)}</div>
@@ -598,10 +837,11 @@ export default function HomePage() {
                     ) : (
                       <div className="fw-medium">
                         {selectedAnnouncement.work_end &&
-                        selectedAnnouncement.work_end !== selectedAnnouncement.work_date
-                          ? `${dateTH(selectedAnnouncement.work_date)} – ${dateTH(
-                              selectedAnnouncement.work_end
-                            )}`
+                          selectedAnnouncement.work_end !==
+                          selectedAnnouncement.work_date
+                          ? `${dateTH(
+                            selectedAnnouncement.work_date
+                          )} – ${dateTH(selectedAnnouncement.work_end)}`
                           : dateTH(selectedAnnouncement.work_date)}
                       </div>
                     )}
@@ -609,40 +849,56 @@ export default function HomePage() {
 
                   {selectedAnnouncement.deadline && (
                     <div className="col-md-6">
-                      <div className="small text-muted mb-1">วันปิดรับสมัคร</div>
-                      <div className="fw-medium">{formatDateTH(selectedAnnouncement.deadline)}</div>
+                      <div className="small text-muted mb-1">
+                        วันปิดรับสมัคร
+                      </div>
+                      <div className="fw-medium">
+                        {formatDateTH(selectedAnnouncement.deadline)}
+                      </div>
                     </div>
                   )}
 
                   <div className="col-md-6">
-                    <div className="small text-muted mb-1">ชั้นปีที่สมัครได้</div>
-                    <div className="fw-medium">{selectedAnnouncement.year ?? "-"}</div>
+                    <div className="small text-muted mb-1">
+                      ชั้นปีที่สมัครได้
+                    </div>
+                    <div className="fw-medium">
+                      {selectedAnnouncement.year ?? "-"}
+                    </div>
                   </div>
 
                   <div className="col-md-6">
                     <div className="small text-muted mb-1">จำนวนรับ</div>
                     <div className="fw-medium">
                       {selectedAnnouncement.remaining ?? "ไม่จำกัด"}
-                      {selectedAnnouncement.capacity != null && <> / {selectedAnnouncement.capacity}</>}
+                      {selectedAnnouncement.capacity != null && (
+                        <> / {selectedAnnouncement.capacity}</>
+                      )}
                     </div>
                   </div>
 
                   <div className="col-md-6">
                     <div className="small text-muted mb-1">สาขาที่เกี่ยวข้อง</div>
-                    <div className="fw-medium">{selectedAnnouncement.department}</div>
+                    <div className="fw-medium">
+                      {selectedAnnouncement.department}
+                    </div>
                   </div>
 
                   {selectedAnnouncement.location && (
                     <div className="col-12">
                       <div className="small text-muted mb-1">สถานที่ทำงาน</div>
-                      <div className="fw-medium">{selectedAnnouncement.location}</div>
+                      <div className="fw-medium">
+                        {selectedAnnouncement.location}
+                      </div>
                     </div>
                   )}
 
                   {selectedAnnouncement.description && (
                     <div className="col-12">
                       <div className="small text-muted mb-1">รายละเอียด</div>
-                      <div className="fw-normal">{selectedAnnouncement.description}</div>
+                      <div className="fw-normal">
+                        {selectedAnnouncement.description}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -674,7 +930,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Local styles (อยู่ใน JSX ภายในคอมโพเนนต์) */}
+      {/* Local styles */}
       <style>{`
         .glass-card{ backdrop-filter: blur(6px); transition: transform .15s ease, box-shadow .15s ease; }
         .glass-card:hover{ transform: translateY(-2px); box-shadow: 0 12px 30px rgba(28,39,49,.12)!important; }
@@ -693,6 +949,8 @@ export default function HomePage() {
         .year-pill.year4{ background:linear-gradient(135deg,#ff416c,#ff4b2b); }
 
         .banner-overlay .badge{ font-size:.85rem; padding:.38rem .6rem; }
+        /* optional */
+        .btn-link .bi-bell { vertical-align: -2px; }
       `}</style>
     </div>
   );

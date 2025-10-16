@@ -29,7 +29,8 @@ const StatusBadge = ({ status }) => {
       : status === "closed"
       ? "badge text-bg-secondary"
       : "badge text-bg-dark";
-  const label = status === "open" ? "เปิดรับ" : status === "closed" ? "ปิดรับ" : "เก็บถาวร";
+  const label =
+    status === "open" ? "เปิดรับ" : status === "closed" ? "ปิดรับ" : "เก็บถาวร";
   return <span className={cls}>{label}</span>;
 };
 
@@ -51,6 +52,15 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
     status: "open",
     deadline: "",
     work_periods: [], // [{ start_date, end_date }]
+    // ✅ เพิ่ม field จำนวนรับ
+    seats: "", // ใช้เป็นอินพุตในฟอร์ม
+  });
+
+  // สำหรับพรีวิวข้อมูลความจุปัจจุบันตอนแก้ไข
+  const [capInfo, setCapInfo] = useState({
+    capacity: null,
+    accepted_count: 0,
+    remaining: null,
   });
 
   const headerText = useMemo(
@@ -66,6 +76,11 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
       setError("");
       try {
         const data = await getAnnouncementById(id);
+        // รองรับทั้ง capacity และ seats ที่มาจาก backend
+        const rawCap = data?.capacity ?? data?.seats ?? "";
+        const capNum =
+          rawCap == null || String(rawCap).trim() === "" ? "" : String(Number(rawCap));
+
         setForm({
           title: data?.title || "",
           description: data?.description || "",
@@ -74,6 +89,25 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
           status: data?.status || "open",
           deadline: toDateInput(data?.deadline),
           work_periods: Array.isArray(data?.work_periods) ? data.work_periods : [],
+          seats: capNum, // ✅ แสดงจำนวนรับในช่องกรอก
+        });
+
+        setCapInfo({
+          capacity:
+            rawCap == null || String(rawCap).trim() === "" ? null : Number(rawCap),
+          accepted_count: Number.isFinite(Number(data?.accepted_count))
+            ? Number(data.accepted_count)
+            : 0,
+          remaining:
+            data?.capacity == null
+              ? null
+              : Math.max(
+                  0,
+                  Number(data.capacity) -
+                    (Number.isFinite(Number(data?.accepted_count))
+                      ? Number(data.accepted_count)
+                      : 0)
+                ),
         });
       } catch (e) {
         console.error(e);
@@ -112,7 +146,13 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
     setSaving(true);
     setError("");
     try {
-      const payload = { ...form, teacher_id: user?.id ?? null };
+      // ✅ map จำนวนรับ -> ส่งทั้ง seats และ capacity ให้ backend แน่นอน
+      const payload = {
+        ...form,
+        teacher_id: user?.id ?? null,
+        seats: form.seats ? Number(form.seats) : null,
+        capacity: form.seats ? Number(form.seats) : null,
+      };
       if (isEdit) {
         await updateAnnouncement(id, payload);
         alert("บันทึกการแก้ไขสำเร็จ");
@@ -130,7 +170,10 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
   };
 
   return (
-    <div className="min-vh-100" style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}>
+    <div
+      className="min-vh-100"
+      style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}
+    >
       {/* Top Bar ให้โทนเดียวกับหน้าอื่น */}
       <div
         className="d-flex align-items-center px-3"
@@ -149,12 +192,20 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
           className="rounded-3 me-3"
           style={{ height: 40, width: 40, objectFit: "cover" }}
         />
-        <h5 className="text-white fw-semibold m-0">CSIT Competency System — Teacher</h5>
+        <h5 className="text-white fw-semibold m-0">
+          CSIT Competency System — Teacher
+        </h5>
         <div className="ms-auto">
-          <button className="btn btn-light btn-sm rounded-pill me-2" onClick={() => navigate(-1)}>
+          <button
+            className="btn btn-light btn-sm rounded-pill me-2"
+            onClick={() => navigate(-1)}
+          >
             ← ย้อนกลับ
           </button>
-          <button className="btn btn-light btn-sm rounded-pill" onClick={() => navigate("/teacher-announcements")}>
+          <button
+            className="btn btn-light btn-sm rounded-pill"
+            onClick={() => navigate("/teacher-announcements")}
+          >
             รายการประกาศของฉัน
           </button>
         </div>
@@ -166,7 +217,8 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
           <div className="card-body d-flex flex-wrap align-items-center gap-2">
             <h4 className="m-0">{headerText}</h4>
             <div className="ms-auto small text-muted">
-              สถานะปัจจุบัน: <StatusBadge status={form.status} /> {form.deadline ? `· ปิดรับ ${formatTH(form.deadline)}` : ""}
+              สถานะปัจจุบัน: <StatusBadge status={form.status} />{" "}
+              {form.deadline ? `· ปิดรับ ${formatTH(form.deadline)}` : ""}
             </div>
           </div>
         </div>
@@ -182,7 +234,10 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
           <div className="row g-4">
             {/* ฟอร์ม */}
             <div className="col-12 col-lg-7">
-              <form className="card border-0 shadow-sm rounded-4" onSubmit={onSubmit}>
+              <form
+                className="card border-0 shadow-sm rounded-4"
+                onSubmit={onSubmit}
+              >
                 <div className="card-body p-4 p-lg-5">
                   {/* หัวข้อ */}
                   <div className="form-floating mb-3">
@@ -210,22 +265,24 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                     <label htmlFor="desc">รายละเอียดงาน</label>
                   </div>
 
-                  {/* สาขา / ชั้นปี / สถานะ / เดดไลน์ */}
+                  {/* สาขา / ชั้นปี / สถานะ / เดดไลน์ / จำนวนรับ */}
                   <div className="row g-3">
-                    <div className="col-sm-5">
+                    <div className="col-sm-4">
                       <div className="form-floating">
                         <input
                           id="dept"
                           className="form-control rounded-3"
                           placeholder="สาขา"
                           value={form.department}
-                          onChange={(e) => updateField("department", e.target.value)}
+                          onChange={(e) =>
+                            updateField("department", e.target.value)
+                          }
                         />
                         <label htmlFor="dept">สาขาที่เกี่ยวข้อง</label>
                       </div>
                     </div>
 
-                    <div className="col-sm-3">
+                    <div className="col-sm-2">
                       <div className="form-floating">
                         <select
                           id="year"
@@ -266,9 +323,27 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                           type="date"
                           className="form-control rounded-3"
                           value={toDateInput(form.deadline)}
-                          onChange={(e) => updateField("deadline", e.target.value)}
+                          onChange={(e) =>
+                            updateField("deadline", e.target.value)
+                          }
                         />
                         <label htmlFor="deadline">ปิดรับ</label>
+                      </div>
+                    </div>
+
+                    {/* ✅ จำนวนรับ (คน) */}
+                    <div className="col-sm-2">
+                      <div className="form-floating">
+                        <input
+                          id="seats"
+                          type="number"
+                          min={1}
+                          className="form-control rounded-3"
+                          value={form.seats}
+                          onChange={(e) => updateField("seats", e.target.value)}
+                          placeholder="5"
+                        />
+                        <label htmlFor="seats">จำนวนรับ</label>
                       </div>
                     </div>
                   </div>
@@ -278,7 +353,11 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                   {/* Work periods */}
                   <div className="d-flex align-items-center justify-content-between mb-2">
                     <h6 className="m-0">ช่วงวันที่ทำงาน</h6>
-                    <button type="button" className="btn btn-sm btn-outline-primary rounded-pill" onClick={addPeriod}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-primary rounded-pill"
+                      onClick={addPeriod}
+                    >
                       + เพิ่มช่วง
                     </button>
                   </div>
@@ -306,7 +385,9 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                                     id={`start_${idx}`}
                                     className="form-control rounded-3"
                                     value={toDateInput(p.start_date)}
-                                    onChange={(e) => updatePeriod(idx, "start_date", e.target.value)}
+                                    onChange={(e) =>
+                                      updatePeriod(idx, "start_date", e.target.value)
+                                    }
                                   />
                                   <label htmlFor={`start_${idx}`}>เริ่ม</label>
                                 </div>
@@ -318,7 +399,9 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                                     id={`end_${idx}`}
                                     className="form-control rounded-3"
                                     value={toDateInput(p.end_date)}
-                                    onChange={(e) => updatePeriod(idx, "end_date", e.target.value)}
+                                    onChange={(e) =>
+                                      updatePeriod(idx, "end_date", e.target.value)
+                                    }
                                   />
                                   <label htmlFor={`end_${idx}`}>สิ้นสุด (ถ้ามี)</label>
                                 </div>
@@ -333,10 +416,18 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                   )}
 
                   <div className="d-flex flex-wrap gap-2 justify-content-end mt-4">
-                    <button type="button" className="btn btn-outline-secondary rounded-pill" onClick={() => navigate(-1)}>
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary rounded-pill"
+                      onClick={() => navigate(-1)}
+                    >
                       ยกเลิก
                     </button>
-                    <button className="btn btn-primary rounded-pill" type="submit" disabled={saving}>
+                    <button
+                      className="btn btn-primary rounded-pill"
+                      type="submit"
+                      disabled={saving}
+                    >
                       {saving ? (
                         <>
                           <span className="spinner-border spinner-border-sm me-2" />
@@ -374,12 +465,17 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                   )}
                 </div>
                 <div className="card-body d-flex flex-column">
-                  <h5 className="mb-1 text-truncate" title={form.title || "หัวข้อประกาศ"}>
+                  <h5
+                    className="mb-1 text-truncate"
+                    title={form.title || "หัวข้อประกาศ"}
+                  >
                     {form.title || "หัวข้อประกาศ"}
                   </h5>
                   <div className="small text-muted mb-2">
                     สาขา: <span className="fw-medium">{form.department || "—"}</span>
                     {form.deadline && <> · ปิดรับ {formatTH(form.deadline)}</>}
+                    {/* ✅ แสดงจำนวนรับในพรีวิว */}
+                    {form.seats && <> · รับ {form.seats} คน</>}
                   </div>
 
                   <div className="small mb-2">
@@ -387,7 +483,10 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                     {form.work_periods?.length ? (
                       form.work_periods.map((p, i) => (
                         <div key={i}>
-                          • {formatTH(p.start_date)}{p.end_date && p.end_date !== p.start_date ? ` – ${formatTH(p.end_date)}` : ""}
+                          • {formatTH(p.start_date)}
+                          {p.end_date && p.end_date !== p.start_date
+                            ? ` – ${formatTH(p.end_date)}`
+                            : ""}
                         </div>
                       ))
                     ) : (
@@ -396,14 +495,42 @@ export default function EditAnnouncementPage({ mode = "edit" }) {
                   </div>
 
                   {form.description && (
-                    <p className="text-muted mb-0" style={{ whiteSpace: "pre-wrap" }}>
+                    <p
+                      className="text-muted mb-0"
+                      style={{ whiteSpace: "pre-wrap" }}
+                    >
                       {form.description}
                     </p>
                   )}
                 </div>
               </div>
 
-              <div className="text-muted small mt-2">พรีวิวหน้าตาการ์ดที่จะไปแสดงหน้า “ประกาศรับสมัคร”</div>
+              {/* ถ้าเป็นแก้ไข: โชว์สถานะจำนวนรับปัจจุบัน (อิงข้อมูลที่โหลดมา) */}
+              {isEdit && (
+                <div className="card border-0 shadow-sm rounded-4 mt-3">
+                  <div className="card-body small">
+                    <div className="fw-semibold mb-1">สรุปจำนวนรับ (ปัจจุบัน)</div>
+                    <div>รับทั้งหมด: {capInfo.capacity ?? "ไม่จำกัด"}</div>
+                    <div>รับแล้ว: {capInfo.accepted_count}</div>
+                    <div>
+                      คงเหลือ:{" "}
+                      {capInfo.capacity == null
+                        ? "ไม่จำกัด"
+                        : Math.max(
+                            0,
+                            (capInfo.capacity || 0) - (capInfo.accepted_count || 0)
+                          )}
+                    </div>
+                    <div className="text-muted mt-2">
+                      * การเปลี่ยน “จำนวนรับ” ในแบบฟอร์มด้านซ้ายจะบันทึกเป็นค่าใหม่ทันทีเมื่อกด “บันทึกการแก้ไข”
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="text-muted small mt-2">
+                พรีวิวหน้าตาการ์ดที่จะไปแสดงหน้า “ประกาศรับสมัคร”
+              </div>
             </div>
           </div>
         )}
