@@ -5,18 +5,26 @@ import {
   getRequiredCourses, saveCourseGrades, recalcAcademic,
   getSavedGrades
 } from "../../services/competencyApi";
+import Swal from "sweetalert2";
+import "sweetalert2/dist/sweetalert2.min.css";
 
 const GRADE_OPTIONS = ["","A","B+","B","C+","C","D+","D","F"];
 
+// ✅ helper กันค้าง: ใส่ timeout ให้ทุกคำสั่ง async
+function withTimeout(promise, ms = 15000) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`การดำเนินการนานเกินไป (${ms/1000}s)`)), ms);
+    promise.then((v) => { clearTimeout(t); resolve(v); })
+           .catch((e) => { clearTimeout(t); reject(e); });
+  });
+}
+
 export default function AcademicSection({ user }){
-  // ใช้ค่าจากโปรไฟล์ในฐานข้อมูล (ไม่พึ่ง user.major_id จาก Auth)
   const [majorId, setMajorId] = useState(null);
   const [yearLevel, setYearLevel] = useState(4);
   const [gpa, setGpa] = useState("");
 
-  // รายวิชาบังคับ: { "1-1":[],"1-2":[],"2-1":[],... }
   const [reqMap, setReqMap] = useState({});
-  // เกรดที่โชว์ในฟอร์ม: { [course_code]: "A"/"B+"... }
   const [grades, setGrades] = useState({});
 
   const [calc1, setCalc1] = useState(null);
@@ -24,13 +32,13 @@ export default function AcademicSection({ user }){
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  /* 1) โหลดโปรไฟล์ -> เอา major_id + year_level + GPA จากฐานข้อมูล */
+  /* 1) โหลดโปรไฟล์ */
   useEffect(()=>{
     if (!user?.id) return;
     (async ()=>{
       setLoading(true);
       try {
-        const res = await getCompetencyProfile(user.id);
+        const res = await withTimeout(getCompetencyProfile(user.id), 15000);
         const acct = res?.account || {};
         const y = acct.year_level ?? 4;
         setMajorId(acct.major_id ?? null);
@@ -42,7 +50,7 @@ export default function AcademicSection({ user }){
     })();
   },[user?.id]);
 
-  /* 2) เมื่อรู้ majorId + yearLevel แล้ว: โหลด “วิชาบังคับสะสม” + “เกรดที่เคยบันทึก” แล้ว merge ใส่ฟอร์ม */
+  /* 2) โหลดวิชาบังคับ + เกรดที่เคยบันทึก */
   useEffect(()=>{
     if (!user?.id || !majorId || !yearLevel) return;
 
@@ -50,20 +58,16 @@ export default function AcademicSection({ user }){
       setLoading(true);
       try {
         const tasks = [];
-
-        // รายวิชาบังคับสะสมตั้งแต่ปี 1..ชั้นปี
         for (let y = 1; y <= yearLevel; y++){
           for (let s = 1; s <= 2; s++){
             tasks.push(
-              getRequiredCourses({ major: majorId, year: y, sem: s })
+              withTimeout(getRequiredCourses({ major: majorId, year: y, sem: s }), 15000)
                 .then(r => ({ type: "req", y, s, list: r.required || [] }))
             );
           }
         }
-
-        // เกรดทั้งหมด (ล่าสุดต่อรายวิชา)
         tasks.push(
-          getSavedGrades(user.id).then(r => ({ type: "grades", map: r.map || {} }))
+          withTimeout(getSavedGrades(user.id), 15000).then(r => ({ type: "grades", map: r.map || {} }))
         );
 
         const results = await Promise.all(tasks);
@@ -80,11 +84,10 @@ export default function AcademicSection({ user }){
               if (initialFormGrades[c.code] === undefined) initialFormGrades[c.code] = "";
             });
           } else if (it.type === "grades"){
-            saved = it.map; // { code: "A", ... }
+            saved = it.map;
           }
         });
 
-        // merge: ถ้าวิชานี้มีเกรดใน DB แล้ว ให้ขึ้นค่านั้นเลย
         Object.keys(initialFormGrades).forEach(code=>{
           if (saved[code]) initialFormGrades[code] = saved[code];
         });
@@ -97,7 +100,7 @@ export default function AcademicSection({ user }){
     })();
   },[user?.id, majorId, yearLevel]);
 
-  /* 3) รวมรายการสำหรับบันทึกครั้งเดียว */
+  /* 3) รวมรายการบันทึก */
   const itemsForSave = useMemo(()=>{
     const items = [];
     for (let y = 1; y <= yearLevel; y++){
@@ -109,7 +112,7 @@ export default function AcademicSection({ user }){
             items.push({
               course_code: c.code,
               letter,
-              year: 2568,  // TODO: ปรับปีการศึกษาให้ตรงระบบ
+              year: 2568, // TODO
               semester: s,
             });
           }
@@ -119,27 +122,55 @@ export default function AcademicSection({ user }){
     return items;
   },[reqMap, grades, yearLevel]);
 
-  /* 4) เปลี่ยนเกรดในฟอร์ม */
+  /* 4) เปลี่ยนเกรด */
   const onChangeGrade = (code, val) =>
     setGrades(prev => ({ ...prev, [code]: val }));
 
-  /* 5) บันทึกทั้งหมด & รีเฟรชค่าใหม่จาก DB ให้ฟอร์มขึ้นตามนั้นเลย */
+  /* 5) บันทึกทั้งหมด (กันค้างด้วย timeout + ปิดกล่องแน่นอน) */
   const onSaveAll = async () => {
+    if (saving) return; // กันดับเบิลคลิก
+    const gradeCount = itemsForSave.length;
+
+    const confirm = await Swal.fire({
+      title: "ยืนยันบันทึกข้อมูล",
+      html: `
+        <div class="text-start">
+          <div>• อัปเดต <b>GPA</b> เป็น: <b>${gpa === "" ? "ไม่ระบุ" : gpa}</b></div>
+          <div>• บันทึกเกรดรายวิชา: <b>${gradeCount}</b> รายการ</div>
+          <div class="mt-2 small text-muted">ชั้นปีปัจจุบัน: ปี ${yearLevel}</div>
+        </div>
+      `,
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "บันทึก",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#0d6efd"
+    });
+    if (!confirm.isConfirmed) return;
+
     setSaving(true);
     try {
-      // (ก) อัปเดต GPA + ชั้นปี
-      await updateCompetencyProfile(user.id, {
-        manual_gpa: gpa === "" ? null : Number(gpa),
-        year_level: Number(yearLevel),
+      await Swal.fire({
+        title: "กำลังบันทึก...",
+        html: "โปรดรอสักครู่ ระบบกำลังอัปเดตข้อมูล",
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        didOpen: () => Swal.showLoading(),
       });
 
-      // (ข) บันทึกเกรดทุกวิชาที่กรอก (bulk)
+      // (ก) อัปเดตโปรไฟล์
+      await withTimeout(updateCompetencyProfile(user.id, {
+        manual_gpa: gpa === "" ? null : Number(gpa),
+        year_level: Number(yearLevel),
+      }), 15000);
+
+      // (ข) เกรดรายวิชา (ถ้ามี)
       if (itemsForSave.length) {
-        await saveCourseGrades({ account_id: user.id, items: itemsForSave });
+        await withTimeout(saveCourseGrades({ account_id: user.id, items: itemsForSave }), 20000);
       }
 
-      // (ค) ดึงเกรดล่าสุดกลับมาเติมในฟอร์ม (sync กับฐานข้อมูล)
-      const saved = await getSavedGrades(user.id);
+      // (ค) sync เกรดล่าสุดเข้าฟอร์ม
+      const saved = await withTimeout(getSavedGrades(user.id), 15000);
       setGrades(prev => {
         const next = { ...prev };
         Object.keys(next).forEach(code => {
@@ -148,20 +179,37 @@ export default function AcademicSection({ user }){
         return next;
       });
 
-      // (ง) คำนวณคะแนนเฉพาะชั้นปีปัจจุบัน (เทอม 1/2)
+      // (ง) คำนวณคะแนนปีปัจจุบัน (ทั้ง 2 เทอม) — ถ้าตัวใด error จะไม่ค้าง
       const [r1, r2] = await Promise.all([
-        recalcAcademic(user.id, { year: Number(yearLevel), sem: 1 }),
-        recalcAcademic(user.id, { year: Number(yearLevel), sem: 2 }),
+        withTimeout(recalcAcademic(user.id, { year: Number(yearLevel), sem: 1 }), 15000).catch(() => null),
+        withTimeout(recalcAcademic(user.id, { year: Number(yearLevel), sem: 2 }), 15000).catch(() => null),
       ]);
       setCalc1(r1);
       setCalc2(r2);
 
-      alert("บันทึกด้านวิชาการ (ทุกปีที่แสดง) สำเร็จ");
+      // ปิด loading (ถ้ายังเปิด) แล้ว Toast สำเร็จ
+      if (Swal.isVisible()) await Swal.close();
+      await Swal.mixin({ toast: true, position: "top-end", showConfirmButton: false, timer: 2500, timerProgressBar: true })
+        .fire({ icon: "success", title: "บันทึกด้านวิชาการสำเร็จ" });
+
     } catch (e) {
       console.error(e);
-      alert(e?.message || "บันทึกไม่สำเร็จ");
+      // ปิด loading ให้ชัวร์ก่อนแสดง error
+      if (Swal.isVisible()) {
+        try { await Swal.close(); } catch {}
+      }
+      await Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: e?.message || "เกิดข้อผิดพลาดจากเซิร์ฟเวอร์",
+        confirmButtonColor: "#0d6efd",
+      });
     } finally {
       setSaving(false);
+      // กันหลงเหลือ modal
+      if (Swal.isVisible()) {
+        try { await Swal.close(); } catch {}
+      }
     }
   };
 
@@ -251,20 +299,20 @@ export default function AcademicSection({ user }){
           <div><strong>ผลคำนวณด้านวิชาการ (ชั้นปี {yearLevel})</strong></div>
           {calc1 && (
             <div className="mt-2">
-              <u>เทอม 1</u> – GPA ใช้คำนวณ: <b>{calc1.gpa_used ?? "-"}</b>,
-              % ผ่านวิชาบังคับ: <b>{calc1.core_completion_pct}%</b>,
-              คะแนน GPA: <b>{calc1.score_gpa}/25</b>,
-              คะแนนวิชาบังคับ: <b>{calc1.score_core}/15</b>,
-              รวม: <b>{calc1.score_academic}/40</b>
+              <u>เทอม 1</u> – GPA ใช้คำนวณ: <b>{calc1?.gpa_used ?? "-"}</b>,
+              % ผ่านวิชาบังคับ: <b>{calc1?.core_completion_pct}%</b>,
+              คะแนน GPA: <b>{calc1?.score_gpa}/25</b>,
+              คะแนนวิชาบังคับ: <b>{calc1?.score_core}/15</b>,
+              รวม: <b>{calc1?.score_academic}/40</b>
             </div>
           )}
           {calc2 && (
             <div className="mt-2">
-              <u>เทอม 2</u> – GPA ใช้คำนวณ: <b>{calc2.gpa_used ?? "-"}</b>,
-              % ผ่านวิชาบังคับ: <b>{calc2.core_completion_pct}%</b>,
-              คะแนน GPA: <b>{calc2.score_gpa}/25</b>,
-              คะแนนวิชาบังคับ: <b>{calc2.score_core}/15</b>,
-              รวม: <b>{calc2.score_academic}/40</b>
+              <u>เทอม 2</u> – GPA ใช้คำนวณ: <b>{calc2?.gpa_used ?? "-"}</b>,
+              % ผ่านวิชาบังคับ: <b>{calc2?.core_completion_pct}%</b>,
+              คะแนน GPA: <b>{calc2?.score_gpa}/25</b>,
+              คะแนนวิชาบังคับ: <b>{calc2?.score_core}/15</b>,
+              รวม: <b>{calc2?.score_academic}/40</b>
             </div>
           )}
         </div>

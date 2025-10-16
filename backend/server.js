@@ -33,12 +33,15 @@ function loadRouter(modPath) {
   process.exit(1);
 }
 
+
+
 /* ====== Mount routes ====== */
 app.use("/api", loadRouter("./routes/auth"));
 app.use("/api/users", loadRouter("./routes/users"));
 app.use("/api/admin", loadRouter("./routes/admin"));
 app.use("/api/competency", loadRouter("./routes/competency")); // <- ตรวจให้ตรงชื่อไฟล์
 app.use("/api/announcements", loadRouter("./routes/announcements"));
+app.use("/api/majors", loadRouter("./routes/majors"));
 
 /* ====== Health ====== */
 app.get("/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
@@ -54,5 +57,5 @@ app.use((err, req, res, next) => {
 });
 
 /* ====== Start ====== */
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));

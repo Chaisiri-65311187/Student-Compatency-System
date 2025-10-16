@@ -56,7 +56,7 @@ export async function deleteUser(id) {
 
 export async function listMajors() {
   try {
-    return await jsonFetch(url("/api/users/majors/list"));
+    return await jsonFetch(url("/api/majors/list"));return await jsonFetch(url("/api/majors/list"));
   } catch {
     return [];
   }

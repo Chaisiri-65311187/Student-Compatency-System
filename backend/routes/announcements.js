@@ -1,294 +1,400 @@
 // backend/routes/announcements.js
 const express = require("express");
 const router = express.Router();
-const pool = require("../db"); // mysql2/promise instance
 
-/* helpers */
-function normInt(v, d = null) {
+// NOTE: ปรับตามการ export ของโปรเจกต์คุณ
+// ถ้า db.js export เป็น { pool } ให้ใช้: const { pool } = require("../db");
+const pool = require("../db");
+
+/* ----------------------- helpers ----------------------- */
+const normInt = (v) => {
   const n = Number(v);
-  return Number.isFinite(n) ? n : d;
+  return Number.isFinite(n) ? n : null;
+};
+
+const pick = (obj, keys = []) =>
+  keys.reduce((o, k) => {
+    if (obj && obj[k] !== undefined) o[k] = obj[k];
+    return o;
+  }, {});
+
+/** map periods[] <-> legacy columns in DB */
+function periodsToLegacy(cols = {}) {
+  const p =
+    Array.isArray(cols.work_periods) && cols.work_periods.length
+      ? cols.work_periods[0]
+      : {};
+  return {
+    work_date: p.start_date || cols.work_date || null,
+    work_end: p.end_date || cols.work_end || null,
+    work_time_start: p.start_time || cols.work_time_start || null,
+    work_time_end: p.end_time || cols.work_time_end || null,
+  };
 }
-function nullableStr(v) {
-  if (v === undefined || v === null) return null;
-  const s = String(v).trim();
-  return s.length ? s : null;
-}
-function toDateOrNull(v) {
-  if (!v) return null;
-  const s = String(v).slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
-}
-function toTimeOrNull(v) {
-  if (!v) return null;
-  const s = String(v).slice(0, 8);
-  return /^\d{2}:\d{2}(:\d{2})?$/.test(s) ? s.slice(0, 5) + ":00" : null;
+function legacyToPeriods(row = {}) {
+  const { work_date, work_end, work_time_start, work_time_end } = row;
+  return [
+    {
+      start_date: work_date || null,
+      end_date: work_end || null,
+      start_time: work_time_start || null,
+      end_time: work_time_end || null,
+    },
+  ];
 }
 
-/* ------------------------ GET /api/announcements ------------------------ */
-/** list with filters:
- *  - teacher_id (number)  -> รายการของอาจารย์คนนั้น
- *  - status ("open"|"closed"|"archived")
- *  - q (search by title/teacher/department)
- */
+const addCapacityInfo = (row) => {
+  const accepted = Number(row.accepted_count || 0);
+  const cap =
+    row.capacity === undefined || row.capacity === null
+      ? null
+      : Number(row.capacity);
+  return {
+    ...row,
+    accepted_count: accepted,
+    capacity: cap,
+    remaining: cap == null ? null : Math.max(0, cap - accepted),
+  };
+};
+
+/* =========================================================
+ *  รายการ / สร้าง ประกาศ
+ * =======================================================*/
+
+// GET /api/announcements?teacher_id=&status=&q=
 router.get("/", async (req, res) => {
   try {
-    const teacherId = normInt(req.query.teacher_id);
-    const status = nullableStr(req.query.status);
-    const q = nullableStr(req.query.q);
-
+    const { teacher_id, status, q } = req.query;
     const where = [];
-    const params = [];
-    if (teacherId) { where.push("a.teacher_id = ?"); params.push(teacherId); }
-    if (status)     { where.push("a.status = ?");     params.push(status); }
-    if (q) {
-      where.push("(a.title LIKE ? OR a.teacher LIKE ? OR a.department LIKE ?)");
-      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    const args = [];
+
+    if (teacher_id) {
+      where.push("a.teacher_id = ?");
+      args.push(normInt(teacher_id));
     }
-    const sql =
-      `SELECT a.id, a.title, a.description, a.seats,
-              a.work_date, a.work_end, a.work_time_start, a.work_time_end,
-              a.year, a.department, a.teacher, a.teacher_id, a.status,
-              a.location, a.deadline, a.created_at, a.updated_at
-       FROM announcements a
-       ${where.length ? "WHERE " + where.join(" AND ") : ""}
-       ORDER BY a.created_at DESC`;
-    const [rows] = await pool.query(sql, params);
-    res.json({ items: rows });
+    if (status) {
+      where.push("a.status = ?");
+      args.push(status);
+    }
+    if (q) {
+      where.push("(a.title LIKE ? OR a.description LIKE ?)");
+      args.push(`%${q}%`, `%${q}%`);
+    }
+
+    const sql = `
+      SELECT a.*,
+             t.full_name AS teacher_name,
+             (SELECT COUNT(*) FROM announcement_applications x
+               WHERE x.announcement_id = a.id AND x.status = 'accepted') AS accepted_count
+      FROM announcements a
+      LEFT JOIN accounts t ON t.id = a.teacher_id
+      ${where.length ? "WHERE " + where.join(" AND ") : ""}
+      ORDER BY a.created_at DESC
+    `;
+    const [rows] = await pool.query(sql, args);
+
+    const items = rows.map((r) => ({
+      ...r,
+      work_periods: legacyToPeriods(r), // ให้ FE ใช้รูปแบบเดียวกัน
+    }));
+
+    res.json({ items: items.map(addCapacityInfo) });
   } catch (e) {
     console.error("GET /announcements error:", e);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-/* ------------------------ GET /api/announcements/:id ------------------------ */
-router.get("/:id", async (req, res) => {
-  try {
-    const id = normInt(req.params.id);
-    if (!id) return res.status(400).json({ message: "Invalid id" });
-
-    const [[ann]] = await pool.query(
-      `SELECT a.*
-         FROM announcements a
-        WHERE a.id = ?`,
-      [id]
-    );
-    if (!ann) return res.status(404).json({ message: "Not found" });
-
-    const [periods] = await pool.query(
-      `SELECT id, start_date, end_date, start_time, end_time
-         FROM announcement_periods
-        WHERE announcement_id = ?
-        ORDER BY id ASC`,
-      [id]
-    );
-    res.json({ ...ann, work_periods: periods });
-  } catch (e) {
-    console.error("GET /announcements/:id error:", e);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-/* ------------------------ POST /api/announcements ------------------------ */
-/** body:
- *  title, description, seats, work_date, work_end,
- *  work_time_start, work_time_end,
- *  work_periods: [{start_date,end_date,start_time,end_time}] (optional)
- *  year, department, status, location, deadline,
- *  teacher (display), teacher_id (owner)
- */
+// POST /api/announcements  (ต้องมี teacher_id)
 router.post("/", async (req, res) => {
   try {
-    const {
-      title, description,
-      seats, work_date, work_end,
-      work_time_start, work_time_end,
-      work_periods,
-      year, department, status,
-      location, deadline,
-      teacher, teacher_id,
-    } = req.body || {};
+    const body = req.body || {};
+    const teacher_id = normInt(body.teacher_id);
+    if (!teacher_id) return res.status(400).json({ message: "Missing teacher_id" });
 
-    if (!nullableStr(title) || !nullableStr(description)) {
-      return res.status(400).json({ message: "title/description required" });
-    }
+    const data = pick(body, [
+      "title",
+      "description",
+      "department",
+      "year",
+      "status",
+      "deadline",
+      "location",
+      "capacity",
+      "seats", // เผื่อฝั่ง FE ส่งชื่อเก่า
+    ]);
+    data.year = normInt(data.year);
+    data.status = data.status || "open";
+    // รองรับทั้ง capacity และ seats
+    const capacity =
+      data.capacity != null ? normInt(data.capacity) : normInt(data.seats);
 
-    const data = {
-      title: String(title).trim(),
-      description: String(description).trim(),
-      seats: normInt(seats, 1),
-      work_date: toDateOrNull(work_date),
-      work_end: toDateOrNull(work_end),
-      work_time_start: toTimeOrNull(work_time_start),
-      work_time_end: toTimeOrNull(work_time_end),
-      year: normInt(year),
-      department: nullableStr(department),
-      status: nullableStr(status) || "open",
-      location: nullableStr(location),
-      deadline: toDateOrNull(deadline),
-      teacher: nullableStr(teacher),
-      teacher_id: normInt(teacher_id), // อาจเป็น null ได้ (ถ้าสร้างจากระบบเก่า)
-    };
-
-    const [ins] = await pool.query(
-      `INSERT INTO announcements
-       (title, description, seats, work_date, work_end, work_time_start, work_time_end,
-        year, department, teacher, teacher_id, status, location, deadline, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, NOW(), NOW())`,
-      [
-        data.title, data.description, data.seats,
-        data.work_date, data.work_end, data.work_time_start, data.work_time_end,
-        data.year, data.department, data.teacher, data.teacher_id,
-        data.status, data.location, data.deadline
-      ]
-    );
-    const newId = ins.insertId;
-
-    // periods (optional)
-    const periods = Array.isArray(work_periods) ? work_periods : [];
-    for (const p of periods) {
-      await pool.query(
-        `INSERT INTO announcement_periods
-           (announcement_id, start_date, end_date, start_time, end_time)
-         VALUES (?,?,?,?,?)`,
-        [
-          newId,
-          toDateOrNull(p.start_date),
-          toDateOrNull(p.end_date || p.start_date),
-          toTimeOrNull(p.start_time),
-          toTimeOrNull(p.end_time),
-        ]
-      );
-    }
-
-    const [[created]] = await pool.query(`SELECT * FROM announcements WHERE id=?`, [newId]);
-    res.status(201).json({ ...created, work_periods: periods });
-  } catch (e) {
-    console.error("POST /announcements error:", e);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-/* ------------------------ PUT /api/announcements/:id ------------------------ */
-/** ต้องส่ง teacher_id (เจ้าของ) มาด้วยเพื่อเช็คสิทธิ์ */
-router.put("/:id", async (req, res) => {
-  try {
-    const id = normInt(req.params.id);
-    if (!id) return res.status(400).json({ message: "Invalid id" });
-
-    const teacherId = normInt(req.body?.teacher_id);
-    if (!teacherId) return res.status(400).json({ message: "Missing teacher_id" });
-
-    const [[ann]] = await pool.query(`SELECT teacher_id FROM announcements WHERE id=?`, [id]);
-    if (!ann) return res.status(404).json({ message: "Not found" });
-    if (ann.teacher_id && ann.teacher_id !== teacherId) {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-
-    const {
-      title, description,
-      seats, work_date, work_end,
-      work_time_start, work_time_end,
-      work_periods,
-      year, department, status,
-      location, deadline,
-      teacher,
-    } = req.body || {};
+    // แปลง work_periods -> legacy columns
+    const legacy = periodsToLegacy(body);
 
     await pool.query(
-      `UPDATE announcements SET
-        title=?,
-        description=?,
-        seats=?,
-        work_date=?,
-        work_end=?,
-        work_time_start=?,
-        work_time_end=?,
-        year=?,
-        department=?,
-        teacher=?,
-        status=?,
-        location=?,
-        deadline=?,
-        updated_at=NOW()
-       WHERE id=?`,
+      `INSERT INTO announcements
+         (teacher_id, title, description, department, year, status, deadline, location,
+          capacity, work_date, work_end, work_time_start, work_time_end)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        nullableStr(title),
-        nullableStr(description),
-        normInt(seats, 1),
-        toDateOrNull(work_date),
-        toDateOrNull(work_end),
-        toTimeOrNull(work_time_start),
-        toTimeOrNull(work_time_end),
-        normInt(year),
-        nullableStr(department),
-        nullableStr(teacher),
-        nullableStr(status) || "open",
-        nullableStr(location),
-        toDateOrNull(deadline),
-        id,
+        teacher_id,
+        data.title || "",
+        data.description || "",
+        data.department || "ไม่จำกัด",
+        data.year,
+        data.status,
+        data.deadline || null,
+        data.location || "",
+        capacity,
+        legacy.work_date,
+        legacy.work_end,
+        legacy.work_time_start,
+        legacy.work_time_end,
       ]
     );
 
-    // replace periods if provided
-    if (Array.isArray(work_periods)) {
-      await pool.query(`DELETE FROM announcement_periods WHERE announcement_id=?`, [id]);
-      for (const p of work_periods) {
-        await pool.query(
-          `INSERT INTO announcement_periods
-             (announcement_id, start_date, end_date, start_time, end_time)
-           VALUES (?,?,?,?,?)`,
-          [
-            id,
-            toDateOrNull(p.start_date),
-            toDateOrNull(p.end_date || p.start_date),
-            toTimeOrNull(p.start_time),
-            toTimeOrNull(p.end_time),
-          ]
-        );
-      }
-    }
-
-    const [[after]] = await pool.query(`SELECT * FROM announcements WHERE id=?`, [id]);
-    const [periods] = await pool.query(
-      `SELECT id, start_date, end_date, start_time, end_time
-         FROM announcement_periods WHERE announcement_id=? ORDER BY id ASC`,
-      [id]
-    );
-    res.json({ ...after, work_periods: periods });
+    res.json({ ok: true });
   } catch (e) {
-    console.error("PUT /announcements/:id error:", e);
+    console.error("POST /announcements error:", e);
+    res.status(500).json({ message: "Create failed" });
+  }
+});
+
+/* =========================================================
+ *  เส้นทางเฉพาะ (ต้องมาก่อน :id) — นักศึกษาดู “ของฉัน”
+ * =======================================================*/
+
+// GET /api/announcements/my-applications?student_id=xx
+router.get("/my-applications", async (req, res) => {
+  const studentId = normInt(req.query.student_id);
+  if (!studentId) return res.status(400).json({ message: "Missing student_id" });
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.id AS application_id, a.status, a.created_at,
+              an.id AS announcement_id, an.title, an.deadline, an.status AS announce_status
+       FROM announcement_applications a
+       JOIN announcements an ON an.id = a.announcement_id
+       WHERE a.student_id = ?
+       ORDER BY a.created_at DESC`,
+      [studentId]
+    );
+    res.json({ items: rows });
+  } catch (e) {
+    console.error("GET /my-applications error:", e);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-/* ------------------------ DELETE /api/announcements/:id ------------------------ */
-/** ต้องแนบ teacher_id ใน body เพื่อตรวจสิทธิ์ */
-router.delete("/:id", async (req, res) => {
-  try {
-    const id = normInt(req.params.id);
-    const teacherId = normInt(req.body?.teacher_id);
-    if (!id || !teacherId) {
-      return res.status(400).json({ message: "Missing teacher_id or id" });
-    }
+/* =========================================================
+ *  Routes ที่มี :id (ไม่ใช้ regex — ตรวจเลขในโค้ด)
+ * =======================================================*/
 
-    const [[ann]] = await pool.query(
-      `SELECT teacher_id FROM announcements WHERE id = ?`,
+// GET /api/announcements/:id
+router.get("/:id", async (req, res) => {
+  const id = normInt(req.params.id);
+  if (!id) return res.status(400).json({ message: "Invalid id" });
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.*,
+              t.full_name AS teacher_name,
+              (SELECT COUNT(*) FROM announcement_applications x
+                WHERE x.announcement_id = a.id AND x.status='accepted') AS accepted_count
+       FROM announcements a
+       LEFT JOIN accounts t ON t.id = a.teacher_id
+       WHERE a.id = ?`,
       [id]
     );
-    if (!ann) return res.status(404).json({ message: "Not found" });
+    const row = rows[0];
+    if (!row) return res.status(404).json({ message: "Not found" });
 
-    // หากประกาศมี owner แล้ว ต้องเป็นเจ้าของเท่านั้นที่ลบได้
-    if (ann.teacher_id && ann.teacher_id !== teacherId) {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-
-    await pool.query(`DELETE FROM announcement_periods WHERE announcement_id = ?`, [id]);
-    await pool.query(`DELETE FROM announcements WHERE id = ?`, [id]);
-    res.json({ ok: true });
+    const withPeriods = { ...row, work_periods: legacyToPeriods(row) };
+    res.json(addCapacityInfo(withPeriods));
   } catch (e) {
-    console.error("DELETE /announcements/:id error:", e);
+    console.error("GET /:id error:", e);
     res.status(500).json({ message: "Server error" });
   }
+});
+
+// PUT /api/announcements/:id  (ต้องมี teacher_id)
+router.put("/:id", async (req, res) => {
+  const id = normInt(req.params.id);
+  if (!id) return res.status(400).json({ message: "Invalid id" });
+
+  const body = req.body || {};
+  const teacher_id = normInt(body.teacher_id);
+  if (!teacher_id) return res.status(400).json({ message: "Missing teacher_id" });
+
+  try {
+    const data = pick(body, [
+      "title",
+      "description",
+      "department",
+      "year",
+      "status",
+      "deadline",
+      "location",
+      "capacity",
+      "seats",
+    ]);
+    data.year = normInt(data.year);
+    const capacity =
+      data.capacity != null ? normInt(data.capacity) : normInt(data.seats);
+
+    const legacy = periodsToLegacy(body);
+
+    await pool.query(
+      `UPDATE announcements
+         SET title=?, description=?, department=?, year=?, status=?, deadline=?, location=?,
+             capacity=?, work_date=?, work_end=?, work_time_start=?, work_time_end=?
+       WHERE id=? AND teacher_id=?`,
+      [
+        data.title || "",
+        data.description || "",
+        data.department || "ไม่จำกัด",
+        data.year,
+        data.status || "open",
+        data.deadline || null,
+        data.location || "",
+        capacity,
+        legacy.work_date,
+        legacy.work_end,
+        legacy.work_time_start,
+        legacy.work_time_end,
+        id,
+        teacher_id,
+      ]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("PUT /:id error:", e);
+    res.status(500).json({ message: "Update failed" });
+  }
+});
+
+// DELETE /api/announcements/:id  (ต้องมี teacher_id - รับได้ทั้ง query/body)
+router.delete("/:id", async (req, res) => {
+  const id = normInt(req.params.id);
+  if (!id) return res.status(400).json({ message: "Invalid id" });
+
+  const teacher_id =
+    normInt(req.query.teacher_id) ?? normInt((req.body || {}).teacher_id);
+  if (!teacher_id) return res.status(400).json({ message: "Missing teacher_id" });
+
+  try {
+    await pool.query("DELETE FROM announcements WHERE id=? AND teacher_id=?", [
+      id,
+      teacher_id,
+    ]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /:id error:", e);
+    res.status(500).json({ message: "Delete failed" });
+  }
+});
+
+/* =========================================================
+ *  สมัคร / ถอนสมัคร / รายชื่อผู้สมัคร / เปลี่ยนสถานะสมัคร
+ * =======================================================*/
+
+// POST /api/announcements/:id/apply   body: { student_id, note? }
+router.post("/:id/apply", async (req, res) => {
+  const annId = normInt(req.params.id);
+  const { student_id, note } = req.body || {};
+  const sid = normInt(student_id);
+
+  if (!annId) return res.status(400).json({ message: "Invalid announcement id" });
+  if (!sid) return res.status(400).json({ message: "Missing student_id" });
+
+  try {
+    await pool.query(
+      "INSERT INTO announcement_applications (announcement_id, student_id, note) VALUES (?,?,?)",
+      [annId, sid, note || null]
+    );
+    res.json({ ok: true, status: "pending" });
+  } catch (e) {
+    if (e && e.code === "ER_DUP_ENTRY") {
+      return res.json({ ok: true, status: "pending", duplicate: true });
+    }
+    console.error("POST apply error:", e);
+    res.status(500).json({ message: "Apply failed" });
+  }
+});
+
+// DELETE /api/announcements/:id/apply   body: { student_id }
+router.delete("/:id/apply", async (req, res) => {
+  const annId = normInt(req.params.id);
+  const sid = normInt((req.body || {}).student_id);
+
+  if (!annId) return res.status(400).json({ message: "Invalid announcement id" });
+  if (!sid) return res.status(400).json({ message: "Missing student_id" });
+
+  try {
+    await pool.query(
+      "UPDATE announcement_applications SET status='withdrawn' WHERE announcement_id=? AND student_id=?",
+      [annId, sid]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE apply error:", e);
+    res.status(500).json({ message: "Withdraw failed" });
+  }
+});
+
+// GET /api/announcements/:id/applications  (อาจารย์ดูรายชื่อผู้สมัคร)
+router.get("/:id/applications", async (req, res) => {
+  const annId = normInt(req.params.id);
+  if (!annId) return res.status(400).json({ message: "Invalid id" });
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.id, a.student_id, a.status, a.created_at,
+              acc.username, acc.full_name
+       FROM announcement_applications a
+       JOIN accounts acc ON acc.id = a.student_id
+       WHERE a.announcement_id=?
+       ORDER BY a.created_at DESC`,
+      [annId]
+    );
+    res.json({ items: rows });
+  } catch (e) {
+    console.error("GET /:id/applications error:", e);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PATCH /api/announcements/:id/applications/:appId   body: { action: 'accept'|'reject' }
+router.patch("/:id/applications/:appId", async (req, res) => {
+  const annId = normInt(req.params.id);
+  const appId = normInt(req.params.appId);
+  const { action } = req.body || {};
+  if (!annId || !appId) return res.status(400).json({ message: "Invalid id" });
+  if (!["accept", "reject"].includes(action))
+    return res.status(400).json({ message: "Invalid action" });
+
+  // จำกัดตาม capacity ตอน "accept"
+  if (action === "accept") {
+    const [[row]] = await pool.query(
+      `SELECT capacity,
+              (SELECT COUNT(*) FROM announcement_applications WHERE announcement_id=? AND status='accepted') AS acc
+       FROM announcements WHERE id=?`,
+      [annId, annId]
+    );
+    const cap = row?.capacity == null ? null : Number(row.capacity);
+    const acc = Number(row?.acc || 0);
+    if (cap != null && acc >= cap) {
+      return res.status(409).json({ message: "เต็มตามจำนวนรับแล้ว" });
+    }
+  }
+
+  const newStatus = action === "accept" ? "accepted" : "rejected";
+  await pool.query(
+    `UPDATE announcement_applications SET status=? WHERE id=? AND announcement_id=?`,
+    [newStatus, appId, annId]
+  );
+  res.json({ ok: true, status: newStatus });
 });
 
 module.exports = router;

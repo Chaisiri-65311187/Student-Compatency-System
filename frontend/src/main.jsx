@@ -13,7 +13,6 @@ import { AnnouncementsProvider } from "./contexts/AnnouncementsContext";
 import WelcomePage from "./components/WelcomePage";
 import LoginPage from "./components/LoginPage";
 import HomePage from "./components/HomePage";
-import AddDataPage from "./components/AddDataPage";
 import StudentInfoPage from "./components/StudentInfoPage";
 import AddAnnouncementPage from "./components/AddAnnouncementPage";
 import AdminDashboard from "./components/admin/AdminDashboard";
@@ -21,6 +20,8 @@ import ManageUsersPage from "./components/admin/ManageUsersPage";
 import CompetencyFormPage from "./components/CompetencyFormPage";
 import StudentProfilePage from "./components/StudentProfilePage";
 import TeacherAnnouncementsPage from "./components/TeacherAnnouncementsPage";
+import EditAnnouncementPage from "./components/EditAnnouncementPage";
+import ApplicantsManagePage from "./components/ApplicantsManagePage";
 
 
 
@@ -49,12 +50,15 @@ ReactDOM.createRoot(document.getElementById("root")).render(
 
               {/* student/teacher ที่ล็อกอินแล้วเข้าได้ */}
               <Route path="/home" element={<PrivateRoute element={<HomePage />} />} />
-              <Route path="/add-data" element={<PrivateRoute element={<AddDataPage />} />} />
               <Route path="/student-info" element={<PrivateRoute element={<StudentInfoPage />} />} />
               <Route path="/create-announcement" element={<PrivateRoute element={<AddAnnouncementPage />} />} />
               <Route path="/competency/form" element={<CompetencyFormPage />} />
               <Route path="/profile" element={<PrivateRoute element={<StudentProfilePage />} />} />
               <Route path="/teacher-announcements" element={<TeacherAnnouncementsPage />} />
+              <Route path="/announcements/:id/edit" element={<EditAnnouncementPage mode="edit" />} />
+              <Route path="/create-announcement" element={<EditAnnouncementPage mode="create" />} />
+              <Route path="/announcements/:id/applicants" element={<ApplicantsManagePage />} />
+
 
               {/* ✅ admin-only */}
               <Route

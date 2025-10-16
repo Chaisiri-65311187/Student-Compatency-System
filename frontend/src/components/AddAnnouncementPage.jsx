@@ -2,352 +2,461 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { createAnnouncement } from "../services/announcementsApi";
 import Swal from "sweetalert2";
 
+/* ===== Helpers ===== */
 const tz = "Asia/Bangkok";
-const todayStr = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const toISODate = (s) => {
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
 };
-const parseSafeDate = (s) => { if (!s) return null; const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); if (m) return new Date(+m[1], +m[2] - 1, +m[3]); const d = new Date(s); return isNaN(d) ? null : d; };
-const formatDateTH = (s, withYear = true) => { const d = parseSafeDate(s); if (!d) return "-"; return new Intl.DateTimeFormat("th-TH", { timeZone: tz, day: "2-digit", month: "short", year: withYear ? "numeric" : undefined }).format(d); };
-const formatTimeHM = (t) => !t ? "" : String(t).slice(0, 5);
-const formatDateRangeTH = (start, end) => { const a = parseSafeDate(start), b = parseSafeDate(end); if (a && b) { const same = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear(); if (same) { const fmt = new Intl.DateTimeFormat("th-TH", { timeZone: tz, day: "2-digit", month: "short", year: "numeric" }); const dFmt = new Intl.DateTimeFormat("th-TH", { timeZone: tz, day: "2-digit" }); return `${dFmt.format(a)}–${fmt.format(b)}`; } return `${formatDateTH(start)} – ${formatDateTH(end)}`; } return formatDateTH(start || end); };
+const toHHMM = (s) => {
+  if (!s) return null;
+  const m = /^(\d{2}):?(\d{2})/.exec(String(s));
+  return m ? `${m[1]}:${m[2]}` : null;
+};
+const parseSafe = (s) => (s ? new Date(s) : null);
+const dateTH = (s) => {
+  const d = parseSafe(s);
+  if (!d || isNaN(d.getTime())) return "-";
+  return new Intl.DateTimeFormat("th-TH", {
+    timeZone: tz,
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(d);
+};
+const timeHM = (t) => (t ? String(t).slice(0, 5) : "");
+const lineFromPeriod = (p) => {
+  const a = toISODate(p.startDate);
+  const b = toISODate(p.endDate || p.startDate);
+  const date =
+    a && b && a !== b ? `${dateTH(a)} – ${dateTH(b)}` : dateTH(a || b);
+  const time =
+    p.startTime || p.endTime
+      ? ` (${timeHM(p.startTime) || "—"}–${timeHM(p.endTime) || "—"})`
+      : "";
+  return `${date}${time}`;
+};
+
+const DEPTS = ["ไม่จำกัด", "วิทยาการคอมพิวเตอร์", "เทคโนโลยีสารสนเทศ"];
+const YEARS = [1, 2, 3, 4];
+const STATUSES = ["open", "closed", "archived"];
 
 const StatusBadge = ({ status }) => {
-  const cls = status === "open" ? "badge text-bg-success" : status === "closed" ? "badge text-bg-secondary" : "badge text-bg-dark";
+  const cls =
+    status === "open"
+      ? "badge text-bg-success"
+      : status === "closed"
+      ? "badge text-bg-secondary"
+      : "badge text-bg-dark";
   const label = status === "open" ? "เปิดรับ" : status === "closed" ? "ปิดรับ" : "เก็บถาวร";
   return <span className={cls}>{label}</span>;
 };
 
 export default function AddAnnouncementPage() {
-  const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
-  const [formData, setFormData] = useState({
-    title: "", description: "", seats: 1, year: "", department: "",
-    status: "open", location: "", deadline: "",
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    department: "ไม่จำกัด",
+    year: "",
+    seats: "",
+    status: "open",
+    location: "",
+    deadline: "",
   });
-  const [workPeriods, setWorkPeriods] = useState([{ startDate: "", startTime: "", endDate: "", endTime: "" }]);
-  const [saving, setSaving] = useState(false);
 
-  const teacherName = useMemo(() => user?.full_name || user?.fullName || user?.username || "Guest", [user]);
-  const today = todayStr();
+  // หลายช่วงวัน/เวลา
+  const [periods, setPeriods] = useState([
+    { startDate: "", endDate: "", startTime: "", endTime: "" },
+  ]);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    if (name === "seats") setFormData(p => ({ ...p, seats: Math.max(1, Number(value || 1)) }));
-    else setFormData(p => ({ ...p, [name]: value }));
-  };
-  const handlePeriodChange = (i, field, value) => {
-    setWorkPeriods(prev => {
-      const next = [...prev]; next[i] = { ...next[i], [field]: value };
-      if (field === "startDate" && value && !next[i].endDate) next[i].endDate = value;
-      return next;
-    });
-  };
-  const addPeriod = () => setWorkPeriods(p => [...p, { startDate: "", startTime: "", endDate: "", endTime: "" }]);
-  const removePeriod = (i) => setWorkPeriods(p => p.filter((_, idx) => idx !== i));
+  const today = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  }, []);
+
+  const firstPeriod = useMemo(() => periods[0] || {}, [periods]);
+
+  const updateField = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+  const updatePeriod = (idx, k, v) =>
+    setPeriods((ps) =>
+      ps.map((p, i) => {
+        if (i !== idx) return p;
+        const next = { ...p, [k]: v };
+        // ช่วยกรอก: ถ้าเลือก startDate แล้วยังไม่ใส่ endDate -> คัดลอกให้
+        if (k === "startDate" && v && !next.endDate) next.endDate = v;
+        return next;
+      })
+    );
+  const addPeriod = () =>
+    setPeriods((ps) => [...ps, { startDate: "", endDate: "", startTime: "", endTime: "" }]);
+  const removePeriod = (idx) => setPeriods((ps) => ps.filter((_, i) => i !== idx));
 
   const validate = () => {
-    if (!formData.title.trim() || !formData.description.trim()) return "โปรดกรอกชื่อประกาศและรายละเอียดงาน";
-    if (!formData.year || !formData.department) return "โปรดเลือกชั้นปีและสาขา";
-    if (!workPeriods.length) return "โปรดเพิ่มอย่างน้อย 1 ช่วงวันทำงาน";
-    for (let i = 0; i < workPeriods.length; i++) {
-      const p = workPeriods[i];
-      if (!p.startDate) return `ช่วงที่ ${i + 1}: โปรดเลือกวันเริ่มทำงาน`;
-      if (p.endDate && p.endDate < p.startDate) return `ช่วงที่ ${i + 1}: วันสิ้นสุดต้องไม่น้อยกว่าวันเริ่ม`;
-      if (formData.deadline && formData.deadline < p.startDate) return `ช่วงที่ ${i + 1}: วันปิดรับต้องไม่น้อยกว่าวันเริ่มทำงาน`;
-      if (p.startDate && p.endDate && p.startDate === p.endDate && p.startTime && p.endTime && p.endTime < p.startTime)
-        return `ช่วงที่ ${i + 1}: เวลาสิ้นสุดต้องไม่น้อยกว่าเวลาเริ่ม`;
-    }
+    if (!form.title.trim()) return "กรุณากรอกหัวข้อประกาศ";
+    if (!form.seats || Number(form.seats) < 1) return "กรุณากรอกจำนวนรับเป็นเลข ≥ 1";
+    // อย่างน้อย 1 ช่วง และต้องมีวันที่เริ่ม
+    if (!periods.length || !periods[0].startDate) return "กรุณาใส่ช่วงวันที่ทำงานอย่างน้อย 1 ช่วง";
     return null;
   };
 
-  const handleSubmit = async (e) => {
+  const onSubmit = async (e) => {
     e.preventDefault();
-    const err = validate();
-    if (err) { await Swal.fire({ icon: "warning", title: err }); return; }
+    const msg = validate();
+    if (msg) {
+      await Swal.fire("ไม่สามารถบันทึกได้", msg, "warning");
+      return;
+    }
+
+    // map work_periods
+    const wp = periods.map((p) => ({
+      start_date: toISODate(p.startDate),
+      end_date: toISODate(p.endDate || p.startDate),
+      start_time: toHHMM(p.startTime),
+      end_time: toHHMM(p.endTime),
+    }));
+    const first = wp[0] || {};
+
+    const payload = {
+      title: form.title,
+      description: form.description,
+      department: form.department || "ไม่จำกัด",
+      year: form.year ? Number(form.year) : null,
+      status: form.status || "open",
+      location: form.location || "",
+      deadline: toISODate(form.deadline),
+      seats: Number(form.seats) || 1,
+      capacity: Number(form.seats) || 1,
+
+      work_periods: wp,
+      work_date: first.start_date || null,
+      work_end: first.end_date || null,
+      work_time_start: first.start_time || null,
+      work_time_end: first.end_time || null,
+
+      teacher_id: user?.id || null,
+      teacher: user?.full_name || user?.username || null,
+    };
 
     try {
-      setSaving(true);
-      const API = (import.meta.env.VITE_API_BASE || "http://localhost:3000").replace(/\/+$/, "");
-
-      const first = workPeriods[0];
-      const payload = {
-        title: formData.title,
-        description: formData.description,
-        seats: Number(formData.seats) || 1,
-        work_date: first.startDate || null,
-        work_end: first.endDate || null,
-        work_time_start: first.startTime || null,
-        work_time_end: first.endTime || null,
-        work_periods: workPeriods.map(p => ({
-          start_date: p.startDate,
-          end_date: p.endDate || p.startDate,
-          start_time: p.startTime || null,
-          end_time: p.endTime || null,
-        })),
-        year: formData.year,
-        department: formData.department,
-        status: formData.status,
-        location: formData.location,
-        deadline: formData.deadline || null,
-        teacher_id: user?.id || null,
-        teacher: user?.full_name || user?.username || null,          // (เผื่อแสดงชื่ออย่างรวดเร็ว)
-      };
-
-      const res = await fetch(`${API}/api/announcements`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error("ไม่สามารถบันทึกข้อมูลได้");
-
-      await Swal.fire({ icon: "success", title: "บันทึกสำเร็จ!", text: "ประกาศถูกบันทึกแล้ว" });
-      navigate("/teacher-announcements"); // ไปหน้าจัดการ/รายการประกาศ
-    } catch (err) {
-      await Swal.fire({ icon: "error", title: "เกิดข้อผิดพลาด", text: err.message });
-    } finally {
-      setSaving(false);
+      await createAnnouncement(payload);
+      await Swal.fire("บันทึกสำเร็จ", "สร้างประกาศเรียบร้อย", "success");
+      navigate(-1);
+    } catch (e) {
+      Swal.fire("บันทึกไม่สำเร็จ", e?.message || "เกิดข้อผิดพลาด", "error");
     }
   };
 
-  const previewDateLine = (p) => {
-    const dateStr = formatDateRangeTH(p.startDate, p.endDate || p.startDate);
-    const timeStr = (p.startTime || p.endTime)
-      ? ` (${p.startTime ? formatTimeHM(p.startTime) : "—"}–${p.endTime ? formatTimeHM(p.endTime) : "—"})`
-      : "";
-    return `${dateStr}${timeStr}`;
-  };
-  const previewDeadline = formData.deadline ? formatDateTH(formData.deadline) : null;
+  // ===== PREVIEW =====
+  const previewLines = periods.filter((p) => p.startDate).map(lineFromPeriod);
+  const previewDeadline = form.deadline ? dateTH(form.deadline) : null;
 
   return (
     <div className="min-vh-100" style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}>
-      {/* Top Bar */}
-      <div className="d-flex align-items-center px-3" style={{ height: 72, background: "linear-gradient(90deg,#6f42c1,#8e5cff)", boxShadow: "0 4px 14px rgba(111,66,193,.22)" }}>
-        <img src="/src/assets/csit.jpg" alt="Logo" className="rounded-3 me-3" style={{ height: 40, width: 40, objectFit: "cover" }} />
+      {/* Top Bar (theme เดียวกัน) */}
+      <div
+        className="d-flex align-items-center px-3"
+        style={{
+          height: 72,
+          background: "linear-gradient(90deg,#6f42c1,#8e5cff)",
+          boxShadow: "0 4px 14px rgba(111,66,193,.22)",
+          position: "sticky",
+          top: 0,
+          zIndex: 100,
+        }}
+      >
+        <img
+          src="/src/assets/csit.jpg"
+          alt="Logo"
+          className="rounded-3 me-3"
+          style={{ width: 40, height: 40, objectFit: "cover" }}
+        />
         <h5 className="text-white fw-semibold m-0">CSIT Competency System — Teacher</h5>
-        <div className="ms-auto d-flex align-items-center">
-          <span className="text-white-50 me-3">{teacherName}</span>
-          <button className="btn btn-light btn-sm rounded-pill" onClick={() => { logout?.(); navigate("/login"); }}>ออกจากระบบ</button>
+        <div className="ms-auto d-flex align-items-center gap-2">
+          <button className="btn btn-light btn-sm rounded-pill" onClick={() => navigate(-1)}>
+            ← ย้อนกลับ
+          </button>
         </div>
       </div>
 
-      {/* Main */}
       <div className="container-xxl py-4">
         <div className="row g-4">
-          {/* Form */}
+          {/* FORM */}
           <div className="col-12 col-lg-7">
-            <div className="card border-0 shadow-sm rounded-4">
+            <form className="card border-0 shadow-sm rounded-4" onSubmit={onSubmit}>
               <div className="card-body p-4 p-lg-5">
                 <h3 className="fw-semibold text-center mb-4">สร้างประกาศรับสมัครนิสิต</h3>
 
-                <form onSubmit={handleSubmit}>
-                  {/* ชื่อประกาศ */}
-                  <div className="form-floating mb-3">
-                    <input type="text" id="title" className="form-control rounded-3"
-                      name="title" value={formData.title} onChange={handleChange}
-                      placeholder="ชื่อประกาศ" required />
-                    <label htmlFor="title">ชื่อประกาศ</label>
+                <div className="row g-3">
+                  <div className="col-12">
+                    <label className="form-label">หัวข้อประกาศ</label>
+                    <input
+                      type="text"
+                      className="form-control rounded-3"
+                      value={form.title}
+                      onChange={(e) => updateField("title", e.target.value)}
+                      required
+                    />
                   </div>
 
-                  {/* รายละเอียด */}
-                  <div className="form-floating mb-3">
-                    <textarea id="description" className="form-control rounded-3"
-                      name="description" value={formData.description} onChange={handleChange}
-                      placeholder="รายละเอียดงาน" style={{ height: 120 }} required />
-                    <label htmlFor="description">รายละเอียดงาน</label>
+                  <div className="col-12">
+                    <label className="form-label">รายละเอียด</label>
+                    <textarea
+                      className="form-control rounded-3"
+                      rows={4}
+                      value={form.description}
+                      onChange={(e) => updateField("description", e.target.value)}
+                    />
                   </div>
 
-                  {/* จำนวน/เดดไลน์/สถานที่ */}
-                  <div className="row g-3">
-                    <div className="col-sm-4">
-                      <div className="form-floating">
-                        <input type="number" id="seats" className="form-control rounded-3"
-                          name="seats" value={formData.seats} onChange={handleChange}
-                          min={1} placeholder="จำนวนที่รับ" required />
-                        <label htmlFor="seats">จำนวนที่รับ</label>
-                      </div>
-                    </div>
-                    <div className="col-sm-4">
-                      <div className="form-floating">
-                        <input type="date" id="deadline" className="form-control rounded-3"
-                          name="deadline" value={formData.deadline} onChange={handleChange}
-                          min={today} placeholder="วันปิดรับสมัคร" />
-                        <label htmlFor="deadline">วันปิดรับสมัคร</label>
-                      </div>
-                      <div className="form-text">ไม่บังคับ</div>
-                    </div>
-                    <div className="col-sm-4">
-                      <div className="form-floating">
-                        <input type="text" id="location" className="form-control rounded-3"
-                          name="location" value={formData.location} onChange={handleChange}
-                          placeholder="ห้องแลบ 204 / Remote" />
-                        <label htmlFor="location">สถานที่ทำงาน</label>
-                      </div>
-                    </div>
+                  <div className="col-md-4">
+                    <label className="form-label">สาขาที่เกี่ยวข้อง</label>
+                    <select
+                      className="form-select rounded-3"
+                      value={form.department}
+                      onChange={(e) => updateField("department", e.target.value)}
+                    >
+                      {DEPTS.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
-                  {/* ช่วงวันทำงานหลายช่วง */}
-                  <div className="mt-4">
+                  <div className="col-md-4">
+                    <label className="form-label">ชั้นปีที่สมัครได้</label>
+                    <select
+                      className="form-select rounded-3"
+                      value={form.year}
+                      onChange={(e) => updateField("year", e.target.value)}
+                    >
+                      <option value="">ไม่กำหนด</option>
+                      {YEARS.map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="col-md-4">
+                    <label className="form-label">สถานะ</label>
+                    <select
+                      className="form-select rounded-3"
+                      value={form.status}
+                      onChange={(e) => updateField("status", e.target.value)}
+                    >
+                      {STATUSES.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="col-md-4">
+                    <label className="form-label">จำนวนรับ (คน)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      className="form-control rounded-3"
+                      value={form.seats}
+                      onChange={(e) => updateField("seats", e.target.value)}
+                      placeholder="เช่น 5"
+                      required
+                    />
+                  </div>
+
+                  <div className="col-md-4">
+                    <label className="form-label">วันปิดรับสมัคร</label>
+                    <input
+                      type="date"
+                      className="form-control rounded-3"
+                      min={today}
+                      value={form.deadline}
+                      onChange={(e) => updateField("deadline", e.target.value)}
+                    />
+                  </div>
+
+                  <div className="col-md-4">
+                    <label className="form-label">สถานที่ทำงาน</label>
+                    <input
+                      type="text"
+                      className="form-control rounded-3"
+                      value={form.location}
+                      onChange={(e) => updateField("location", e.target.value)}
+                      placeholder="เช่น ห้องแลบ 204 / ทำงานจากบ้าน"
+                    />
+                  </div>
+
+                  {/* Work periods */}
+                  <div className="col-12 mt-2">
                     <div className="d-flex align-items-center justify-content-between mb-2">
-                      <h6 className="m-0">ช่วงวันทำงาน / เวลา</h6>
-                      <button type="button" className="btn btn-sm btn-outline-primary rounded-pill" onClick={addPeriod}>+ เพิ่มช่วง</button>
+                      <label className="form-label m-0">ช่วงวันที่ทำงาน / เวลา (เพิ่มได้หลายช่วง)</label>
+                      <button
+                        type="button"
+                        className="btn btn-outline-primary btn-sm rounded-pill"
+                        onClick={addPeriod}
+                      >
+                        + เพิ่มช่วง
+                      </button>
                     </div>
 
-                    <div className="d-flex flex-column gap-3">
-                      {workPeriods.map((p, idx) => (
+                    <div className="d-flex flex-column gap-2">
+                      {periods.map((p, idx) => (
                         <div key={idx} className="card border-0 shadow-sm rounded-3">
                           <div className="card-body">
-                            <div className="d-flex align-items-center justify-content-between mb-2">
-                              <div className="fw-semibold">ช่วงที่ {idx + 1}</div>
-                              {workPeriods.length > 1 && (
-                                <button type="button" className="btn btn-sm btn-outline-danger rounded-pill" onClick={() => removePeriod(idx)}>
-                                  ลบช่วง
+                            <div className="row g-2 align-items-end">
+                              <div className="col-md-3">
+                                <label className="form-label small">วันที่เริ่ม</label>
+                                <input
+                                  type="date"
+                                  className="form-control rounded-3"
+                                  min={today}
+                                  value={p.startDate}
+                                  onChange={(e) => updatePeriod(idx, "startDate", e.target.value)}
+                                />
+                              </div>
+                              <div className="col-md-3">
+                                <label className="form-label small">วันที่สิ้นสุด</label>
+                                <input
+                                  type="date"
+                                  className="form-control rounded-3"
+                                  min={p.startDate || today}
+                                  value={p.endDate}
+                                  onChange={(e) => updatePeriod(idx, "endDate", e.target.value)}
+                                />
+                              </div>
+                              <div className="col-md-2">
+                                <label className="form-label small">เวลาเริ่ม</label>
+                                <input
+                                  type="time"
+                                  className="form-control rounded-3"
+                                  value={p.startTime}
+                                  onChange={(e) => updatePeriod(idx, "startTime", e.target.value)}
+                                />
+                              </div>
+                              <div className="col-md-2">
+                                <label className="form-label small">เวลาสิ้นสุด</label>
+                                <input
+                                  type="time"
+                                  className="form-control rounded-3"
+                                  value={p.endTime}
+                                  onChange={(e) => updatePeriod(idx, "endTime", e.target.value)}
+                                />
+                              </div>
+                              <div className="col-md-2">
+                                <button
+                                  type="button"
+                                  className="btn btn-outline-danger w-100 rounded-3"
+                                  disabled={periods.length === 1}
+                                  onClick={() => removePeriod(idx)}
+                                >
+                                  ลบช่วงนี้
                                 </button>
-                              )}
-                            </div>
-
-                            <div className="row g-3">
-                              {/* เริ่ม */}
-                              <div className="col-md-6">
-                                <div className="row g-2">
-                                  <div className="col-7">
-                                    <div className="form-floating">
-                                      <input type="date" className="form-control rounded-3" id={`startDate_${idx}`}
-                                        value={p.startDate} onChange={(e) => handlePeriodChange(idx, "startDate", e.target.value)}
-                                        min={today} placeholder="วันเริ่ม" required />
-                                      <label htmlFor={`startDate_${idx}`}>วันเริ่ม</label>
-                                    </div>
-                                  </div>
-                                  <div className="col-5">
-                                    <div className="form-floating">
-                                      <input type="time" className="form-control rounded-3" id={`startTime_${idx}`}
-                                        value={p.startTime} onChange={(e) => handlePeriodChange(idx, "startTime", e.target.value)} />
-                                      <label htmlFor={`startTime_${idx}`}>เวลาเริ่ม</label>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* สิ้นสุด */}
-                              <div className="col-md-6">
-                                <div className="row g-2">
-                                  <div className="col-7">
-                                    <div className="form-floating">
-                                      <input type="date" className="form-control rounded-3" id={`endDate_${idx}`}
-                                        value={p.endDate} onChange={(e) => handlePeriodChange(idx, "endDate", e.target.value)}
-                                        min={p.startDate || today} placeholder="วันสิ้นสุด" />
-                                      <label htmlFor={`endDate_${idx}`}>วันสิ้นสุด (ถ้ามี)</label>
-                                    </div>
-                                  </div>
-                                  <div className="col-5">
-                                    <div className="form-floating">
-                                      <input type="time" className="form-control rounded-3" id={`endTime_${idx}`}
-                                        value={p.endTime} onChange={(e) => handlePeriodChange(idx, "endTime", e.target.value)} />
-                                      <label htmlFor={`endTime_${idx}`}>เวลาสิ้นสุด</label>
-                                    </div>
-                                  </div>
-                                </div>
                               </div>
                             </div>
-
                             <div className="form-text mt-2">ไม่ใส่เวลาได้ (ถือว่าเต็มวัน)</div>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
-
-                  {/* ปี/สาขา/สถานะ */}
-                  <div className="row g-3 mt-3">
-                    <div className="col-sm-4">
-                      <div className="form-floating">
-                        <select id="year" className="form-select rounded-3" name="year"
-                          value={formData.year} onChange={handleChange} required>
-                          <option value="">เลือกชั้นปี</option>
-                          <option value="1">ชั้นปี 1</option>
-                          <option value="2">ชั้นปี 2</option>
-                          <option value="3">ชั้นปี 3</option>
-                          <option value="4">ชั้นปี 4</option>
-                        </select>
-                        <label htmlFor="year">ชั้นปีที่สมัครได้</label>
-                      </div>
-                    </div>
-
-                    <div className="col-sm-5">
-                      <div className="form-floating">
-                        <select id="department" className="form-select rounded-3" name="department"
-                          value={formData.department} onChange={handleChange} required>
-                          <option value="">เลือกสาขา</option>
-                          <option value="วิทยาการคอมพิวเตอร์">วิทยาการคอมพิวเตอร์</option>
-                          <option value="เทคโนโลยีสารสนเทศ">เทคโนโลยีสารสนเทศ</option>
-                          <option value="ไม่จำกัด">ไม่จำกัด</option>
-                        </select>
-                        <label htmlFor="department">สาขาที่เกี่ยวข้อง</label>
-                      </div>
-                    </div>
-
-                    <div className="col-sm-3">
-                      <div className="form-floating">
-                        <select id="status" className="form-select rounded-3" name="status"
-                          value={formData.status} onChange={handleChange}>
-                          <option value="open">เปิดรับ</option>
-                          <option value="closed">ปิดรับ</option>
-                          <option value="archived">เก็บถาวร</option>
-                        </select>
-                        <label htmlFor="status">สถานะประกาศ</label>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* ปุ่ม */}
-                  <div className="d-flex gap-2 justify-content-end mt-4">
-                    <button type="button" className="btn btn-outline-secondary rounded-pill"
-                      onClick={() => navigate("/announcements")} disabled={saving}>
-                      ยกเลิก
-                    </button>
-                    <button type="submit" className="btn btn-primary rounded-pill" disabled={saving}>
-                      {saving && <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />}
-                      ส่งข้อมูล
-                    </button>
-                  </div>
-                </form>
+                </div>
               </div>
-            </div>
+
+              <div className="card-footer bg-transparent border-0 d-flex justify-content-end gap-2 px-4 pb-4">
+                <button type="button" className="btn btn-outline-secondary rounded-pill" onClick={() => navigate(-1)}>
+                  ยกเลิก
+                </button>
+                <button type="submit" className="btn btn-primary rounded-pill">
+                  บันทึกประกาศ
+                </button>
+              </div>
+            </form>
           </div>
 
-          {/* Preview */}
+          {/* PREVIEW */}
           <div className="col-12 col-lg-5">
             <div className="card shadow-sm border-0 rounded-4 overflow-hidden h-100">
-              <div className="ratio" style={{ aspectRatio: "21/9", background: "linear-gradient(135deg,#6f42c1,#b388ff)", position: "relative" }}>
-                <div className="position-absolute top-0 end-0 m-2"><StatusBadge status={formData.status} /></div>
-                {formData.year && <span className="badge bg-light text-dark position-absolute bottom-0 start-0 m-2 fw-bold">ชั้นปี {formData.year}</span>}
+              <div
+                className="ratio"
+                style={{
+                  aspectRatio: "21/9",
+                  background: "linear-gradient(135deg, #6f42c1, #b388ff)",
+                  position: "relative",
+                }}
+              >
+                <div className="position-absolute top-0 end-0 m-2">
+                  <StatusBadge status={form.status} />
+                </div>
+                {form.year && (
+                  <span className="badge bg-light text-dark position-absolute bottom-0 start-0 m-2 fw-bold">
+                    ชั้นปี {form.year}
+                  </span>
+                )}
               </div>
               <div className="card-body d-flex flex-column">
-                <h5 className="mb-1 text-truncate" title={formData.title || "ชื่อประกาศ"}>{formData.title || "ชื่อประกาศ"}</h5>
-                <div className="small text-muted mb-2"><i className="bi bi-person-workspace me-1" />อาจารย์: <span className="fw-medium text-dark">{teacherName}</span></div>
-                <div className="small mb-2">
-                  <i className="bi bi-calendar-event me-1" />
-                  <div className="d-flex flex-column">
-                    {workPeriods.filter(p => p.startDate).length
-                      ? workPeriods.map((p, i) => <div key={i} className="text-body">• {previewDateLine(p)}</div>)
-                      : <span className="text-muted">ยังไม่เลือกช่วงวันทำงาน</span>}
-                  </div>
+                <h5 className="mb-1 text-truncate" title={form.title || "ชื่อประกาศ"}>
+                  {form.title || "ชื่อประกาศ"}
+                </h5>
+                <div className="small text-muted mb-2">
+                  อาจารย์: <span className="fw-medium text-dark">{user?.full_name || user?.username || "—"}</span>
                 </div>
-                {formData.deadline && <div className="small text-muted mb-2"><i className="bi bi-hourglass me-1" />ปิดรับ: {formatDateTH(formData.deadline)}</div>}
-                <div className="small mb-2"><i className="bi bi-mortarboard me-1" />สาขา: <span className="fw-medium">{formData.department || "—"}</span></div>
-                {formData.location && <div className="small text-muted mb-2"><i className="bi bi-geo-alt me-1" />{formData.location}</div>}
-                {!!formData.seats && <div className="small text-muted mb-2"><i className="bi bi-people me-1" />รับ {formData.seats} คน</div>}
-                {formData.description && <p className="text-muted mb-0" style={{ whiteSpace: "pre-wrap" }}>{formData.description}</p>}
+
+                <div className="small mb-2">
+                  <div className="text-muted">ช่วงวันที่ทำงาน:</div>
+                  {previewLines.length ? (
+                    previewLines.map((ln, i) => <div key={i} className="text-body">• {ln}</div>)
+                  ) : (
+                    <span className="text-muted">ยังไม่เลือกช่วงวันทำงาน</span>
+                  )}
+                </div>
+
+                {previewDeadline && (
+                  <div className="small text-muted mb-2">ปิดรับ: {previewDeadline}</div>
+                )}
+
+                <div className="small mb-2">
+                  สาขา: <span className="fw-medium">{form.department || "—"}</span>
+                </div>
+
+                {form.location && <div className="small text-muted mb-2">สถานที่: {form.location}</div>}
+
+                {form.seats && (
+                  <div className="small text-muted mb-2">รับ {form.seats} คน</div>
+                )}
+
+                {form.description && (
+                  <p className="text-muted mb-0" style={{ whiteSpace: "pre-wrap" }}>
+                    {form.description}
+                  </p>
+                )}
               </div>
             </div>
-            <div className="text-muted small mt-2">พรีวิวการ์ดประกาศ</div>
+
+            <div className="text-muted small mt-2">
+              * พรีวิวนี้คือการ์ดที่จะไปแสดงในหน้า “ประกาศรับสมัคร”
+            </div>
           </div>
         </div>
       </div>
 
+      {/* local style */}
       <style>{`
         .form-control:focus, .form-select:focus{
           box-shadow: 0 0 0 .2rem rgba(111,66,193,.12);

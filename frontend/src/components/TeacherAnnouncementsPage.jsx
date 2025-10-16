@@ -2,18 +2,24 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { listMyAnnouncements, deleteAnnouncement } from "../services/announcementsApi";
+import {
+  listMyAnnouncements,
+  deleteAnnouncement,
+} from "../services/announcementsApi";
 import Swal from "sweetalert2";
 
+/* ===== helpers ===== */
 const tz = "Asia/Bangkok";
 function formatDateTH(s) {
   if (!s) return "-";
+  const d = s instanceof Date ? s : new Date(String(s));
+  if (isNaN(d.getTime())) return "-";
   return new Intl.DateTimeFormat("th-TH", {
     timeZone: tz,
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(new Date(s));
+  }).format(d);
 }
 
 export default function TeacherAnnouncementsPage() {
@@ -25,18 +31,47 @@ export default function TeacherAnnouncementsPage() {
 
   useEffect(() => {
     if (!user?.id) return;
+    let alive = true;
+
     (async () => {
       setLoading(true);
       setErr("");
       try {
         const r = await listMyAnnouncements(user.id);
-        setRows(r.items || []);
+        const rawItems = Array.isArray(r) ? r : (r?.items || []);
+
+        const items = rawItems.map((x) => {
+          const rawCap = x.capacity;
+          const capacity =
+            rawCap == null || String(rawCap).trim() === ""
+              ? null
+              : Number(rawCap);
+
+          const accepted = Number.isFinite(Number(x.accepted_count))
+            ? Number(x.accepted_count)
+            : 0;
+
+          return {
+            ...x,
+            capacity,
+            accepted_count: accepted,
+            remaining: capacity == null ? null : Math.max(0, capacity - accepted),
+            // ทำให้ work_periods เป็น array เสมอ เผื่อ backend ส่งไม่มา
+            work_periods: Array.isArray(x.work_periods) ? x.work_periods : [],
+          };
+        });
+
+        if (alive) setRows(items);
       } catch (e) {
-        setErr(e?.message || "โหลดรายการไม่สำเร็จ");
+        if (alive) setErr(e?.message || "โหลดรายการไม่สำเร็จ");
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
+
+    return () => {
+      alive = false;
+    };
   }, [user?.id]);
 
   const handleDelete = async (id) => {
@@ -66,7 +101,7 @@ export default function TeacherAnnouncementsPage() {
       className="min-vh-100"
       style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}
     >
-      {/* 🔹 Top Bar */}
+      {/* Top Bar */}
       <div
         className="d-flex align-items-center px-3"
         style={{
@@ -94,7 +129,7 @@ export default function TeacherAnnouncementsPage() {
           <button
             className="btn btn-light btn-sm rounded-pill"
             onClick={() => {
-              if (logout) logout();
+              logout?.();
               navigate("/login");
             }}
           >
@@ -103,9 +138,9 @@ export default function TeacherAnnouncementsPage() {
         </div>
       </div>
 
-      {/* 🔹 Content */}
+      {/* Content */}
       <div className="container-xxl py-4">
-        {/* Toolbar: ปุ่มย้อนกลับ + สร้างใหม่ */}
+        {/* Toolbar */}
         <div className="d-flex flex-wrap align-items-center gap-2 mb-4">
           <button
             className="btn btn-outline-secondary rounded-pill"
@@ -122,7 +157,7 @@ export default function TeacherAnnouncementsPage() {
           </button>
         </div>
 
-        {/* Loading / Error / Empty */}
+        {/* Loading / Error / Empty / List */}
         {loading ? (
           <div className="text-center text-muted py-5">
             <div className="spinner-border text-primary mb-3" />
@@ -139,12 +174,12 @@ export default function TeacherAnnouncementsPage() {
             {rows.map((r) => (
               <div key={r.id} className="col-md-6 col-lg-4">
                 <div className="card shadow-sm border-0 rounded-4 h-100 overflow-hidden">
+                  {/* Banner */}
                   <div
                     className="ratio"
                     style={{
                       aspectRatio: "21/9",
-                      background:
-                        "linear-gradient(135deg, #6f42c1, #b388ff)",
+                      background: "linear-gradient(135deg, #6f42c1, #b388ff)",
                       position: "relative",
                     }}
                   >
@@ -154,23 +189,38 @@ export default function TeacherAnnouncementsPage() {
                     >
                       ชั้นปี {r.year ?? "—"}
                     </span>
-                    <span
-                      className={`badge position-absolute top-0 end-0 m-2 ${
-                        r.status === "open"
-                          ? "bg-success"
-                          : r.status === "closed"
+
+                    {/* Badge สถานะ: รวมเคสเต็มแล้ว */}
+                    {(() => {
+                      const full =
+                        r.capacity != null && (r.remaining ?? 0) <= 0;
+                      const label =
+                        r.status === "closed"
+                          ? "ปิดรับ"
+                          : r.status !== "open"
+                          ? "เก็บถาวร"
+                          : full
+                          ? "เต็มแล้ว"
+                          : "เปิดรับ";
+                      const cls =
+                        r.status === "closed"
                           ? "bg-secondary"
-                          : "bg-dark"
-                      }`}
-                    >
-                      {r.status === "open"
-                        ? "เปิดรับ"
-                        : r.status === "closed"
-                        ? "ปิดรับ"
-                        : "เก็บถาวร"}
-                    </span>
+                          : r.status !== "open"
+                          ? "bg-dark"
+                          : full
+                          ? "bg-warning text-dark"
+                          : "bg-success";
+                      return (
+                        <span
+                          className={`badge position-absolute top-0 end-0 m-2 ${cls}`}
+                        >
+                          {label}
+                        </span>
+                      );
+                    })()}
                   </div>
 
+                  {/* Body */}
                   <div className="card-body d-flex flex-column">
                     <h6
                       className="fw-semibold mb-1 text-truncate"
@@ -182,6 +232,7 @@ export default function TeacherAnnouncementsPage() {
                       {r.department || "—"} · ชั้นปี {r.year ?? "—"}
                     </div>
 
+                    {/* Work periods */}
                     {Array.isArray(r.work_periods) && r.work_periods.length ? (
                       <div className="small mb-2 text-muted">
                         <i className="bi bi-calendar-event me-1" />
@@ -189,13 +240,16 @@ export default function TeacherAnnouncementsPage() {
                           .map(
                             (p) =>
                               `${formatDateTH(p.start_date)}${
-                                p.end_date ? "–" + formatDateTH(p.end_date) : ""
+                                p.end_date
+                                  ? "–" + formatDateTH(p.end_date)
+                                  : ""
                               }`
                           )
                           .join(", ")}
                       </div>
                     ) : null}
 
+                    {/* Deadline */}
                     {r.deadline && (
                       <div className="small text-muted mb-2">
                         <i className="bi bi-hourglass me-1" />
@@ -203,6 +257,14 @@ export default function TeacherAnnouncementsPage() {
                       </div>
                     )}
 
+                    {/* Capacity / Remaining */}
+                    <div className="small mb-2">
+                      <i className="bi bi-people me-1" />
+                      รับ: {r.remaining ?? "ไม่จำกัด"}
+                      {r.capacity != null && <> / {r.capacity}</>}
+                    </div>
+
+                    {/* Description */}
                     <p
                       className="text-muted small flex-grow-1 mb-2"
                       style={{
@@ -214,19 +276,32 @@ export default function TeacherAnnouncementsPage() {
                       {r.description || "—"}
                     </p>
 
-                    <div className="mt-auto d-flex justify-content-between">
-                      <button
-                        className="btn btn-outline-primary btn-sm rounded-pill px-3"
-                        onClick={() => navigate(`/announcements/${r.id}/edit`)}
-                      >
-                        <i className="bi bi-pencil me-1"></i>แก้ไข
-                      </button>
-                      <button
-                        className="btn btn-outline-danger btn-sm rounded-pill px-3"
-                        onClick={() => handleDelete(r.id)}
-                      >
-                        <i className="bi bi-trash me-1"></i>ลบ
-                      </button>
+                    {/* Actions */}
+                    <div className="mt-auto d-flex justify-content-between flex-wrap gap-2">
+                      <div className="btn-group w-100">
+                        <button
+                          className="btn btn-outline-primary btn-sm w-50"
+                          onClick={() =>
+                            navigate(`/announcements/${r.id}/applicants`)
+                          }
+                        >
+                          <i className="bi bi-people me-1"></i> จัดการผู้สมัคร
+                        </button>
+                        <button
+                          className="btn btn-outline-secondary btn-sm w-25"
+                          onClick={() =>
+                            navigate(`/announcements/${r.id}/edit`)
+                          }
+                        >
+                          <i className="bi bi-pencil-square me-1"></i> แก้ไข
+                        </button>
+                        <button
+                          className="btn btn-outline-danger btn-sm w-25"
+                          onClick={() => handleDelete(r.id)}
+                        >
+                          <i className="bi bi-trash me-1"></i> ลบ
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

@@ -1,142 +1,146 @@
-// src/components/StudentInfoPage.jsx
+// src/pages/EditAnnouncementPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { useNavigate } from "react-router-dom";
-import { getUsers, listMajors } from "../services/api";
-import { getCompetencyProfile } from "../services/competencyApi";
+import {
+  getAnnouncement as getAnnouncementById,
+  createAnnouncement,
+  updateAnnouncement,
+} from "../services/announcementsApi";
 
-const PURPLE = "#6f42c1";
+const tz = "Asia/Bangkok";
+const toDateInput = (v) => (v ? String(v).slice(0, 10) : "");
+const formatTH = (s) => {
+  if (!s) return "-";
+  const d = new Date(s);
+  if (isNaN(d)) return "-";
+  return new Intl.DateTimeFormat("th-TH", {
+    timeZone: tz,
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(d);
+};
 
-const Chip = ({ active, onClick, children }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className={`btn btn-sm me-2 mb-2 ${active ? "btn-primary" : "btn-outline-secondary"}`}
-    style={{ borderRadius: 999 }}
-  >
-    {children}
-  </button>
-);
+const StatusBadge = ({ status }) => {
+  const cls =
+    status === "open"
+      ? "badge text-bg-success"
+      : status === "closed"
+      ? "badge text-bg-secondary"
+      : "badge text-bg-dark";
+  const label = status === "open" ? "เปิดรับ" : status === "closed" ? "ปิดรับ" : "เก็บถาวร";
+  return <span className={cls}>{label}</span>;
+};
 
-export default function StudentInfoPage() {
-  const { user, logout } = useAuth();
+export default function EditAnnouncementPage({ mode = "edit" }) {
+  const { user } = useAuth();
   const navigate = useNavigate();
+  const { id } = useParams();
+  const isEdit = mode === "edit";
 
-  useEffect(() => {
-    if (!user) { navigate("/login"); return; }
-    if (user.role !== "teacher") navigate("/home");
-  }, [user, navigate]);
-
-  const [loading, setLoading] = useState(true);
-  const [majors, setMajors] = useState([]);
-  const [accounts, setAccounts] = useState([]);
-  // enrich ต่อคน: manual_gpa, year_level, computed_gpa
-  const [enrich, setEnrich] = useState({}); // { [id]: { manual_gpa, year_level, computed_gpa } }
+  const [loading, setLoading] = useState(isEdit);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const [filterDept, setFilterDept] = useState({ cs: false, it: false });
-  const [filterYear, setFilterYear] = useState({ 1: false, 2: false, 3: false, 4: false });
-  const [search, setSearch] = useState("");
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    department: "",
+    year: "",
+    status: "open",
+    deadline: "",
+    work_periods: [], // [{ start_date, end_date }]
+  });
 
-  const toggleDept = (k) => setFilterDept((p) => ({ ...p, [k]: !p[k] }));
-  const toggleYear = (k) => setFilterYear((p) => ({ ...p, [k]: !p[k] }));
+  const headerText = useMemo(
+    () => (isEdit ? "แก้ไขประกาศ" : "สร้างประกาศใหม่"),
+    [isEdit]
+  );
 
+  // โหลดข้อมูลเดิมเมื่อเป็นโหมดแก้ไข
   useEffect(() => {
-    const run = async () => {
-      if (!user?.role || user.role !== "teacher") return;
+    if (!isEdit || !id) return;
+    (async () => {
       setLoading(true);
       setError("");
       try {
-        const m = await listMajors();
-        setMajors(m || []);
-
-        // โหลดนิสิตทั้งหมด (role=student) แบบ paginate
-        const LIMIT = 50;
-        let page = 1;
-        let all = [];
-        while (true) {
-          const res = await getUsers({ role: "student", page, limit: LIMIT, search: "" });
-          const rows = res?.rows || [];
-          all = all.concat(rows);
-          const total = res?.total || 0;
-          const totalPages = Math.max(1, Math.ceil(total / LIMIT));
-          if (page >= totalPages || rows.length === 0) break;
-          page += 1;
-        }
-        setAccounts(all);
-
-        // enrich โปรไฟล์ (manual_gpa/year_level + computed_gpa)
-        const ids = all.map((u) => u.id);
-        const CHUNK = 25;
-        const map = {};
-        for (let i = 0; i < ids.length; i += CHUNK) {
-          const chunk = ids.slice(i, i + CHUNK);
-          const results = await Promise.allSettled(chunk.map((id) => getCompetencyProfile(id)));
-          results.forEach((r, idx) => {
-            const id = chunk[idx];
-            if (r.status === "fulfilled" && r.value?.account) {
-              const acct = r.value.account;
-              map[id] = {
-                manual_gpa: acct.manual_gpa ?? null,
-                year_level: acct.year_level ?? null,
-                computed_gpa: r.value.computed_gpa ?? null,
-              };
-            } else {
-              map[id] = { manual_gpa: null, year_level: null, computed_gpa: null };
-            }
-          });
-        }
-        setEnrich(map);
+        const data = await getAnnouncementById(id);
+        setForm({
+          title: data?.title || "",
+          description: data?.description || "",
+          department: data?.department || "",
+          year: data?.year ?? "",
+          status: data?.status || "open",
+          deadline: toDateInput(data?.deadline),
+          work_periods: Array.isArray(data?.work_periods) ? data.work_periods : [],
+        });
       } catch (e) {
         console.error(e);
         setError(e?.message || "โหลดข้อมูลไม่สำเร็จ");
       } finally {
         setLoading(false);
       }
-    };
-    run();
-  }, [user?.role]);
+    })();
+  }, [isEdit, id]);
 
-  const majorNameById = useMemo(() => {
-    const m = {};
-    (majors || []).forEach((x) => { m[x.id] = x.name; });
-    return m;
-  }, [majors]);
+  const updateField = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
-  const filtered = useMemo(() => {
-    const kw = search.trim().toLowerCase();
-    return (accounts || []).filter((acc) => {
-      const depName = majorNameById[acc.major_id] || "";
-      const depOK =
-        (!filterDept.cs && !filterDept.it) ||
-        (filterDept.cs && depName === "วิทยาการคอมพิวเตอร์") ||
-        (filterDept.it && depName === "เทคโนโลยีสารสนเทศ");
+  // จัดการช่วงเวลาปฏิบัติงาน
+  const addPeriod = () =>
+    setForm((p) => ({
+      ...p,
+      work_periods: [...(p.work_periods || []), { start_date: "", end_date: "" }],
+    }));
 
-      const yearValue = enrich[acc.id]?.year_level ?? acc.year_level;
-      const yearOK =
-        (!filterYear[1] && !filterYear[2] && !filterYear[3] && !filterYear[4]) ||
-        filterYear[String(yearValue)];
-
-      const kwOK =
-        !kw ||
-        String(acc.username || "").toLowerCase().includes(kw) ||
-        String(acc.full_name || "").toLowerCase().includes(kw);
-
-      return depOK && yearOK && kwOK;
+  const updatePeriod = (idx, k, v) =>
+    setForm((p) => {
+      const arr = [...(p.work_periods || [])];
+      arr[idx] = { ...arr[idx], [k]: v };
+      return { ...p, work_periods: arr };
     });
-  }, [accounts, majorNameById, filterDept, filterYear, search, enrich]);
 
-  if (!user || user.role !== "teacher") return null;
+  const removePeriod = (idx) =>
+    setForm((p) => {
+      const arr = [...(p.work_periods || [])];
+      arr.splice(idx, 1);
+      return { ...p, work_periods: arr };
+    });
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const payload = { ...form, teacher_id: user?.id ?? null };
+      if (isEdit) {
+        await updateAnnouncement(id, payload);
+        alert("บันทึกการแก้ไขสำเร็จ");
+      } else {
+        await createAnnouncement(payload);
+        alert("สร้างประกาศใหม่สำเร็จ");
+      }
+      navigate("/teacher-announcements");
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="min-vh-100" style={{ background: "linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%)" }}>
-      {/* Top Bar */}
+      {/* Top Bar ให้โทนเดียวกับหน้าอื่น */}
       <div
         className="d-flex align-items-center px-3"
         style={{
           height: 72,
           background: "linear-gradient(90deg, #6f42c1, #8e5cff)",
           boxShadow: "0 4px 14px rgba(111,66,193,.22)",
+          position: "sticky",
+          top: 0,
+          zIndex: 1040,
         }}
       >
         <img
@@ -146,199 +150,268 @@ export default function StudentInfoPage() {
           style={{ height: 40, width: 40, objectFit: "cover" }}
         />
         <h5 className="text-white fw-semibold m-0">CSIT Competency System — Teacher</h5>
-        <div className="ms-auto d-flex align-items-center">
-          <span className="text-white-50 me-3">{user?.full_name || user?.fullName || user?.username}</span>
-          <button
-            className="btn btn-light btn-sm rounded-pill"
-            onClick={() => { logout?.(); navigate("/login"); }}
-          >
-            ออกจากระบบ
+        <div className="ms-auto">
+          <button className="btn btn-light btn-sm rounded-pill me-2" onClick={() => navigate(-1)}>
+            ← ย้อนกลับ
+          </button>
+          <button className="btn btn-light btn-sm rounded-pill" onClick={() => navigate("/teacher-announcements")}>
+            รายการประกาศของฉัน
           </button>
         </div>
       </div>
 
       <div className="container-xxl py-4">
-        {/* Toolbar */}
+        {/* Header + Actions */}
         <div className="card border-0 shadow-sm rounded-4 mb-3">
-          <div className="card-body d-flex flex-wrap gap-2 align-items-center">
-            <h4 className="mb-0 me-auto">ข้อมูลสมรรถนะนิสิต</h4>
-
-            <div className="position-relative me-2 flex-grow-1 flex-md-grow-0" style={{ minWidth: 260 }}>
-              <i className="bi bi-search position-absolute" style={{ left: 12, top: 10, opacity: 0.5 }} />
-              <input
-                type="text"
-                className="form-control ps-5 rounded-pill"
-                placeholder="ค้นหา รหัสนิสิต / ชื่อ"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-
-            <button
-              className="btn btn-primary rounded-pill"
-              onClick={() => navigate("/create-announcement")}
-            >
-              <i className="bi bi-megaphone me-1" />
-              สร้างประกาศรับสมัคร
-            </button>
-            {/* ถ้าต้องแก้ประกาศ ให้ไปหน้ารายการประกาศ แล้วเลือกแก้จากการ์ดประกาศ (จะมี id) */}
-            <button
-              className="btn btn-outline-secondary rounded-pill"
-              onClick={() => navigate("/announcements")}
-            >
-              จัดการประกาศ
-            </button>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="card border-0 shadow-sm rounded-4 mb-3">
-          <div className="card-body">
-            <div className="row g-3 align-items-center">
-              <div className="col-12 col-md-6">
-                <div className="small text-muted mb-2">สาขา</div>
-                <Chip active={filterDept.cs} onClick={() => toggleDept("cs")}>วิทยาการคอมพิวเตอร์</Chip>
-                <Chip active={filterDept.it} onClick={() => toggleDept("it")}>เทคโนโลยีสารสนเทศ</Chip>
-              </div>
-              <div className="col-12 col-md-6">
-                <div className="small text-muted mb-2">ชั้นปี</div>
-                {[1, 2, 3, 4].map((y) => (
-                  <Chip key={y} active={!!filterYear[y]} onClick={() => toggleYear(String(y))}>
-                    ชั้นปี {y}
-                  </Chip>
-                ))}
-              </div>
-            </div>
-            <div className="mt-2 small text-muted">
-              <i className="bi bi-info-circle me-1" />
-              ไม่เลือก = แสดงทั้งหมด
+          <div className="card-body d-flex flex-wrap align-items-center gap-2">
+            <h4 className="m-0">{headerText}</h4>
+            <div className="ms-auto small text-muted">
+              สถานะปัจจุบัน: <StatusBadge status={form.status} /> {form.deadline ? `· ปิดรับ ${formatTH(form.deadline)}` : ""}
             </div>
           </div>
         </div>
 
-        {/* Summary */}
+        {error && <div className="alert alert-danger rounded-4">{error}</div>}
+
         {loading ? (
-          <div className="text-muted small mb-2">
+          <div className="text-muted">
             <span className="spinner-border spinner-border-sm me-2" />
-            กำลังโหลดรายชื่อนิสิต…
+            กำลังโหลดข้อมูล…
           </div>
-        ) : error ? (
-          <div className="alert alert-danger">{error}</div>
         ) : (
-          <div className="text-muted small mb-2">พบ {filtered.length.toLocaleString("th-TH")} รายการ</div>
-        )}
-
-        {/* Results */}
-        {loading ? (
           <div className="row g-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="col-md-6 col-lg-4">
-                <div className="card shadow-sm border-0 rounded-4 overflow-hidden h-100">
-                  <div className="ratio-21x9 placeholder-glow" />
-                  <div className="card-body">
-                    <div className="placeholder col-6 mb-2" />
-                    <div className="placeholder col-4 mb-2" />
-                    <div className="placeholder col-8" />
+            {/* ฟอร์ม */}
+            <div className="col-12 col-lg-7">
+              <form className="card border-0 shadow-sm rounded-4" onSubmit={onSubmit}>
+                <div className="card-body p-4 p-lg-5">
+                  {/* หัวข้อ */}
+                  <div className="form-floating mb-3">
+                    <input
+                      id="title"
+                      className="form-control rounded-3"
+                      value={form.title}
+                      onChange={(e) => updateField("title", e.target.value)}
+                      placeholder="หัวข้อ"
+                      required
+                    />
+                    <label htmlFor="title">หัวข้อประกาศ</label>
                   </div>
+
+                  {/* รายละเอียด */}
+                  <div className="form-floating mb-3">
+                    <textarea
+                      id="desc"
+                      className="form-control rounded-3"
+                      value={form.description}
+                      onChange={(e) => updateField("description", e.target.value)}
+                      placeholder="รายละเอียด"
+                      style={{ height: 140 }}
+                    />
+                    <label htmlFor="desc">รายละเอียดงาน</label>
+                  </div>
+
+                  {/* สาขา / ชั้นปี / สถานะ / เดดไลน์ */}
+                  <div className="row g-3">
+                    <div className="col-sm-5">
+                      <div className="form-floating">
+                        <input
+                          id="dept"
+                          className="form-control rounded-3"
+                          placeholder="สาขา"
+                          value={form.department}
+                          onChange={(e) => updateField("department", e.target.value)}
+                        />
+                        <label htmlFor="dept">สาขาที่เกี่ยวข้อง</label>
+                      </div>
+                    </div>
+
+                    <div className="col-sm-3">
+                      <div className="form-floating">
+                        <select
+                          id="year"
+                          className="form-select rounded-3"
+                          value={form.year}
+                          onChange={(e) => updateField("year", e.target.value)}
+                        >
+                          <option value="">ทุกชั้นปี</option>
+                          <option value="1">ชั้นปี 1</option>
+                          <option value="2">ชั้นปี 2</option>
+                          <option value="3">ชั้นปี 3</option>
+                          <option value="4">ชั้นปี 4</option>
+                        </select>
+                        <label htmlFor="year">ชั้นปีที่สมัครได้</label>
+                      </div>
+                    </div>
+
+                    <div className="col-sm-2">
+                      <div className="form-floating">
+                        <select
+                          id="status"
+                          className="form-select rounded-3"
+                          value={form.status}
+                          onChange={(e) => updateField("status", e.target.value)}
+                        >
+                          <option value="open">เปิดรับ</option>
+                          <option value="closed">ปิดรับ</option>
+                          <option value="archived">เก็บถาวร</option>
+                        </select>
+                        <label htmlFor="status">สถานะ</label>
+                      </div>
+                    </div>
+
+                    <div className="col-sm-2">
+                      <div className="form-floating">
+                        <input
+                          id="deadline"
+                          type="date"
+                          className="form-control rounded-3"
+                          value={toDateInput(form.deadline)}
+                          onChange={(e) => updateField("deadline", e.target.value)}
+                        />
+                        <label htmlFor="deadline">ปิดรับ</label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <hr className="my-4" />
+
+                  {/* Work periods */}
+                  <div className="d-flex align-items-center justify-content-between mb-2">
+                    <h6 className="m-0">ช่วงวันที่ทำงาน</h6>
+                    <button type="button" className="btn btn-sm btn-outline-primary rounded-pill" onClick={addPeriod}>
+                      + เพิ่มช่วง
+                    </button>
+                  </div>
+
+                  {form.work_periods?.length ? (
+                    <div className="d-flex flex-column gap-2">
+                      {form.work_periods.map((p, idx) => (
+                        <div className="card border-0 shadow-sm rounded-3" key={idx}>
+                          <div className="card-body">
+                            <div className="d-flex align-items-center justify-content-between mb-2">
+                              <div className="fw-semibold">ช่วงที่ {idx + 1}</div>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline-danger rounded-pill"
+                                onClick={() => removePeriod(idx)}
+                              >
+                                ลบช่วง
+                              </button>
+                            </div>
+                            <div className="row g-2">
+                              <div className="col-6">
+                                <div className="form-floating">
+                                  <input
+                                    type="date"
+                                    id={`start_${idx}`}
+                                    className="form-control rounded-3"
+                                    value={toDateInput(p.start_date)}
+                                    onChange={(e) => updatePeriod(idx, "start_date", e.target.value)}
+                                  />
+                                  <label htmlFor={`start_${idx}`}>เริ่ม</label>
+                                </div>
+                              </div>
+                              <div className="col-6">
+                                <div className="form-floating">
+                                  <input
+                                    type="date"
+                                    id={`end_${idx}`}
+                                    className="form-control rounded-3"
+                                    value={toDateInput(p.end_date)}
+                                    onChange={(e) => updatePeriod(idx, "end_date", e.target.value)}
+                                  />
+                                  <label htmlFor={`end_${idx}`}>สิ้นสุด (ถ้ามี)</label>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-muted small">ยังไม่มีช่วงวันที่ทำงาน</div>
+                  )}
+
+                  <div className="d-flex flex-wrap gap-2 justify-content-end mt-4">
+                    <button type="button" className="btn btn-outline-secondary rounded-pill" onClick={() => navigate(-1)}>
+                      ยกเลิก
+                    </button>
+                    <button className="btn btn-primary rounded-pill" type="submit" disabled={saving}>
+                      {saving ? (
+                        <>
+                          <span className="spinner-border spinner-border-sm me-2" />
+                          กำลังบันทึก…
+                        </>
+                      ) : isEdit ? (
+                        "บันทึกการแก้ไข"
+                      ) : (
+                        "สร้างประกาศ"
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            {/* พรีวิวแบบการ์ด (ช่วยเช็คหน้าตา) */}
+            <div className="col-12 col-lg-5">
+              <div className="card shadow-sm border-0 rounded-4 overflow-hidden h-100">
+                <div
+                  className="ratio"
+                  style={{
+                    aspectRatio: "21/9",
+                    background: "linear-gradient(135deg,#6f42c1,#b388ff)",
+                    position: "relative",
+                  }}
+                >
+                  <div className="position-absolute top-0 end-0 m-2">
+                    <StatusBadge status={form.status} />
+                  </div>
+                  {form.year && (
+                    <span className="badge bg-light text-dark position-absolute bottom-0 start-0 m-2 fw-bold">
+                      ชั้นปี {form.year}
+                    </span>
+                  )}
+                </div>
+                <div className="card-body d-flex flex-column">
+                  <h5 className="mb-1 text-truncate" title={form.title || "หัวข้อประกาศ"}>
+                    {form.title || "หัวข้อประกาศ"}
+                  </h5>
+                  <div className="small text-muted mb-2">
+                    สาขา: <span className="fw-medium">{form.department || "—"}</span>
+                    {form.deadline && <> · ปิดรับ {formatTH(form.deadline)}</>}
+                  </div>
+
+                  <div className="small mb-2">
+                    <div className="text-muted">ช่วงวันที่ทำงาน:</div>
+                    {form.work_periods?.length ? (
+                      form.work_periods.map((p, i) => (
+                        <div key={i}>
+                          • {formatTH(p.start_date)}{p.end_date && p.end_date !== p.start_date ? ` – ${formatTH(p.end_date)}` : ""}
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-muted">ยังไม่เลือกช่วง</span>
+                    )}
+                  </div>
+
+                  {form.description && (
+                    <p className="text-muted mb-0" style={{ whiteSpace: "pre-wrap" }}>
+                      {form.description}
+                    </p>
+                  )}
                 </div>
               </div>
-            ))}
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-5 card border-0 shadow-sm rounded-4">
-            <div className="card-body">
-              <div className="display-6 mb-2">😶</div>
-              <h5 className="mb-1">ไม่พบข้อมูลสมรรถนะนิสิต</h5>
-              <div className="text-muted">ลองลบตัวกรองหรือเปลี่ยนคำค้นหา</div>
+
+              <div className="text-muted small mt-2">พรีวิวหน้าตาการ์ดที่จะไปแสดงหน้า “ประกาศรับสมัคร”</div>
             </div>
-          </div>
-        ) : (
-          <div className="row g-4">
-            {filtered.map((acc) => {
-              const depName = majorNameById[acc.major_id] || "";
-              const bannerGrad =
-                depName === "วิทยาการคอมพิวเตอร์"
-                  ? `linear-gradient(135deg, ${PURPLE}, #b388ff)`
-                  : depName === "เทคโนโลยีสารสนเทศ"
-                    ? "linear-gradient(135deg, #0d6efd, #66b2ff)"
-                    : "linear-gradient(135deg, #6c757d, #adb5bd)";
-
-              const manualGpa = enrich[acc.id]?.manual_gpa ?? acc.manual_gpa ?? "—";
-              const yearLevel = enrich[acc.id]?.year_level ?? acc.year_level ?? "—";
-              const computedGpa = enrich[acc.id]?.computed_gpa ?? "—";
-
-              return (
-                <div key={acc.id} className="col-md-6 col-lg-4">
-                  <div className="card shadow-sm border-0 rounded-4 overflow-hidden glass-card h-100">
-                    <div className="ratio-21x9" style={{ background: bannerGrad, position: "relative" }}>
-                      {yearLevel !== "—" && (
-                        <span className="badge bg-light text-dark position-absolute bottom-0 start-0 m-2 year-pill">
-                          ชั้นปี {yearLevel}
-                        </span>
-                      )}
-                      {!!depName && (
-                        <span className="badge bg-dark-subtle text-dark position-absolute top-0 end-0 m-2">
-                          {depName}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="card-body d-flex flex-column">
-                      <div className="d-flex align-items-center gap-3 mb-2">
-                        <div
-                          style={{
-                            width: 48, height: 48, borderRadius: 12,
-                            background: "#e9ecef", display: "flex",
-                            alignItems: "center", justifyContent: "center",
-                            fontWeight: 700, color: "#6c757d",
-                          }}
-                          aria-label="avatar"
-                        >
-                          {(acc.full_name || acc.username || "?").toString().slice(0, 1)}
-                        </div>
-                        <div className="flex-grow-1">
-                          <div className="fw-semibold text-truncate" title={acc.full_name}>
-                            {acc.full_name || "—"}
-                          </div>
-                          <div className="small text-muted text-truncate" title={acc.username}>
-                            {acc.username || "—"}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="row g-2 small">
-                        <div className="col-6">
-                          <div className="text-muted">GPA (กรอกเอง)</div>
-                          <div className="fw-medium">{manualGpa}</div>
-                        </div>
-                        <div className="col-6">
-                          <div className="text-muted">GPA (คำนวณ)</div>
-                          <div className="fw-medium">{computedGpa}</div>
-                        </div>
-                        <div className="col-6">
-                          <div className="text-muted">ชั้นปี</div>
-                          <div className="fw-medium">{yearLevel}</div>
-                        </div>
-                        <div className="col-6">
-                          <div className="text-muted">สาขา</div>
-                          <div className="fw-medium">{depName || "—"}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
           </div>
         )}
       </div>
 
+      {/* แต่งโฟกัส/เงาให้กลืนกับหน้าอื่น */}
       <style>{`
-        .glass-card { backdrop-filter: blur(6px); transition: transform .15s ease, box-shadow .15s ease; }
-        .glass-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(28,39,49,.12)!important; }
-        .ratio-21x9 { aspect-ratio: 21/9; width: 100%; background: #e9ecef; }
-        .year-pill { font-weight: 700; }
-        .form-control:focus{
+        .form-control:focus, .form-select:focus{
           box-shadow: 0 0 0 .2rem rgba(111,66,193,.12);
           border-color: #8e5cff;
         }

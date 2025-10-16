@@ -58,7 +58,7 @@ export default function ManageUsersPage() {
 
   // ✅ เพิ่ม year_level เข้า form state
   const [form, setForm] = useState({
-    username: "", password: "", full_name: "", role: "student", major_id: "", year_level: ""
+    username: "", password: "", full_name: "", role: "student", major_id: "", year_level: "", manual_gpa: ""
   });
   const [showPw, setShowPw] = useState(false);
 
