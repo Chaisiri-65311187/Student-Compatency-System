@@ -48,17 +48,30 @@ ReactDOM.createRoot(document.getElementById("root")).render(
               <Route path="/" element={<WelcomePage />} />
               <Route path="/login" element={<LoginPage />} />
 
-              {/* student/teacher ที่ล็อกอินแล้วเข้าได้ */}
+              {/* student ที่ล็อกอินแล้วเข้าได้ */}
               <Route path="/home" element={<PrivateRoute element={<HomePage />} />} />
-              <Route path="/student-info" element={<PrivateRoute element={<StudentInfoPage />} />} />
-              <Route path="/create-announcement" element={<PrivateRoute element={<AddAnnouncementPage />} />} />
               <Route path="/competency/form" element={<CompetencyFormPage />} />
               <Route path="/profile" element={<PrivateRoute element={<StudentProfilePage />} />} />
-              <Route path="/teacher-announcements" element={<TeacherAnnouncementsPage />} />
-              <Route path="/announcements/:id/edit" element={<EditAnnouncementPage mode="edit" />} />
-              <Route path="/create-announcement" element={<EditAnnouncementPage mode="create" />} />
-              <Route path="/announcements/:id/applicants" element={<ApplicantsManagePage />} />
-              <Route path="/admin/contact-inbox" element={<AdminContactInbox />} />
+
+              {/* ✅ teacher */}
+              <Route path="/student-info" element={<PrivateRoute element={<StudentInfoPage />} />} />
+              <Route
+                path="/teacher-announcements"
+                element={<PrivateRoute roles={['teacher']} element={<TeacherAnnouncementsPage />} />}
+              />
+              <Route
+                path="/announcements/:id/edit"
+                element={<PrivateRoute roles={['teacher', 'admin']} element={<EditAnnouncementPage mode="edit" />} />}
+              />
+              <Route
+                path="/create-announcement"
+                element={<PrivateRoute roles={['teacher', 'admin']} element={<EditAnnouncementPage mode="create" />} />}
+              />
+              <Route
+                path="/announcements/:id/applicants"
+                element={<PrivateRoute roles={['teacher', 'admin']} element={<ApplicantsManagePage />} />}
+              />
+
 
 
               {/* ✅ admin-only */}
@@ -70,6 +83,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 path="/admin/users"
                 element={<PrivateRoute roles={["admin"]} element={<ManageUsersPage />} />}
               />
+              <Route path="/admin/contact-inbox" element={<AdminContactInbox />} />
 
               {/* route อื่น ๆ ที่ไม่ตรง ให้ย้อนหน้าแรก */}
               <Route path="*" element={<Navigate to="/" replace />} />

@@ -9,16 +9,18 @@ import {
   getLatestLanguagesAll,
   listTrainings,
   listActivities,
+  peer, // ✅ ใช้ดึงคะแนนประเมินเพื่อน/ตนเอง
 } from "../services/competencyApi";
 import { getAccountById, updateAccount, uploadAvatar } from "../services/api";
 import Radar5 from "../components/profile/Radar5";
 
-// ✅ เรียกใช้สูตรคำนวณจาก scoring (รวมศูนย์ทั้งหมด)
+// สูตรคำนวณรวมศูนย์
 import {
-  scoreAcademic,         // รวม GPA + Core → /40 (ดีฟอลต์ 40:60)
-  scoreLang,             // CEPT level → /20
-  scoreTech,             // Tech → /20
-  calcAllCompetencies,   // รวมเป็น 0–100 ต่อแกน + totalEqual
+  scoreAcademic,       // รวม GPA + Core → /40
+  scoreLang,           // CEPT level → /20
+  scoreTech,           // Tech → /20
+  calcAllCompetencies, // คืน each.{acad,lang,tech,social,comm} และ totalEqual (ยังใช้ social อย่างเดียวในที่นี้)
+  toArray,
 } from "../utils/scoring";
 
 /* ===== Helper: URL รูปจาก backend ===== */
@@ -34,14 +36,23 @@ export default function StudentProfilePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
+  // 🔄 กำหนด periodKey ปัจจุบัน เช่น 2025-1
+  const periodKey = useMemo(() => {
+    const d = new Date(); const y = d.getFullYear(); const m = d.getMonth() + 1;
+    const sem = m <= 5 ? 1 : 2;
+    return `${y}-${sem}`;
+  }, []);
+
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState(null);
-  const [academic, setAcademic] = useState(null); // จะเก็บ "ค่าเฉลี่ยทุกปีทุกเทอม"
+  const [academic, setAcademic] = useState(null); // ค่าเฉลี่ยทุกปีทุกเทอม (gpa25/core15)
   const [langLatest, setLangLatest] = useState(null);
   const [langAll, setLangAll] = useState({ CEPT: null, ICT: null, ITPE: null });
   const [trains, setTrains] = useState([]);
   const [socialActs, setSocialActs] = useState([]);
-  const [commActs, setCommActs] = useState([]);
+
+  // 🆕 ค่าทำงานร่วมกับผู้อื่น
+  const [collab, setCollab] = useState({ peerAvg: 0, selfAvg: 0, peerCount: 0 });
 
   // ====== Edit Profile (Modal) ======
   const [editOpen, setEditOpen] = useState(false);
@@ -78,27 +89,25 @@ export default function StudentProfilePage() {
         for (let y = 1; y <= yMax; y++) {
           for (let s = 1; s <= 2; s++) jobs.push(recalcAcademic(user.id, { year: y, sem: s }).catch(() => null));
         }
-        const all = await Promise.all(jobs);
-        const ok = all.filter(Boolean);
+        const all = (await Promise.all(jobs)).filter(Boolean);
 
-        let avgScore = 0, avgGpa = 0, avgCore = 0, n = 0;
-        ok.forEach(r => {
+        let sumScore = 0, sumGpa = 0, sumCore = 0, n = 0;
+        for (const r of all) {
           if (typeof r?.score_academic === "number") {
-            avgScore += r.score_academic;
-            avgGpa += (r.score_gpa ?? 0);
-            avgCore += (r.score_core ?? 0);
-            n += 1;
+            sumScore += r.score_academic;
+            sumGpa += (r.score_gpa ?? 0);
+            sumCore += (r.score_core ?? 0);
+            n++;
           }
-        });
+        }
         const agg = n
           ? {
-            score_academic: Number((avgScore / n).toFixed(2)),
-            score_gpa: Number((avgGpa / n).toFixed(2)), // /25
-            score_core: Number((avgCore / n).toFixed(2)), // /15
-            // meta จากรายการสุดท้าย (ล่าสุด)
-            gpa_used: ok.at(-1)?.gpa_used ?? null,
-            core_completion_pct: ok.at(-1)?.core_completion_pct ?? null,
-          }
+              score_academic: Number((sumScore / n).toFixed(2)),
+              score_gpa: Number((sumGpa / n).toFixed(2)),   // /25
+              score_core: Number((sumCore / n).toFixed(2)), // /15
+              gpa_used: all.at(-1)?.gpa_used ?? null,
+              core_completion_pct: all.at(-1)?.core_completion_pct ?? null,
+            }
           : null;
         setAcademic(agg);
 
@@ -109,19 +118,34 @@ export default function StudentProfilePage() {
         setLangLatest(lang?.latest || null);
         setLangAll(allLang || { CEPT: null, ICT: null, ITPE: null });
 
-        const [t, s, m] = await Promise.all([
+        const [t, s] = await Promise.all([
           listTrainings(user.id),
           listActivities(user.id, "social"),
-          listActivities(user.id, "communication"),
         ]);
-        setTrains(t.items || []);
-        setSocialActs(s.items || []);
-        setCommActs(m.items || []);
+        setTrains(toArray(t));
+        setSocialActs(toArray(s));
+
+        // 🆕 ดึงผลประเมินเพื่อน/ตนเอง (ถ้ามี endpoint)
+        try {
+          const rec = await peer.received(user.id, periodKey);
+          const peerAvg = Number(rec?.avg ?? rec?.summary?.peer_avg ?? 0) || 0;
+          const peerCount = Number(rec?.count ?? rec?.summary?.peer_count ?? 0) || 0;
+
+          let selfAvg = 0;
+          try {
+            const self = await (peer.self ? peer.self(user.id, periodKey) : peer.given(user.id, periodKey));
+            selfAvg = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+          } catch { /* ignore */ }
+
+          setCollab({ peerAvg, selfAvg, peerCount });
+        } catch {
+          setCollab({ peerAvg: 0, selfAvg: 0, peerCount: 0 });
+        }
       } finally {
         setLoading(false);
       }
     })();
-  }, [user?.id]);
+  }, [user?.id, periodKey]);
 
   // เคลียร์ blob URL เวลาเปลี่ยนไฟล์/ปิดโมดัล
   useEffect(() => () => {
@@ -130,34 +154,46 @@ export default function StudentProfilePage() {
     }
   }, [preview]);
 
-  // ===== รวมคะแนน 5 มิติแบบ 0–100 ต่อแกน + รวมถ่วงเท่ากัน =====
-  const comp = useMemo(() => {
-    // --- Academic: รวมโดยสูตรกลางใน scoring.js (ดีฟอลต์ 40:60) ---
+  // ===== รวมคะแนน (ปรับแกนที่ 5 เป็น Collaboration: Peer 80% + Self 20%) =====
+  const calc = useMemo(() => {
+    // Academic
     const acadObj = scoreAcademic({
       manualGpa: Number(acct?.manual_gpa),
       scoreGpa25: Number(academic?.score_gpa ?? 0),   // /25
-      scoreCore15: Number(academic?.score_core ?? 0),  // /15
-      // weights: { wManual: 0.4, wRequired: 0.6 },     // (ไม่ส่งก็ใช้ค่าเริ่มต้น 40:60)
+      scoreCore15: Number(academic?.score_core ?? 0), // /15
     });
     const acadScore = acadObj.score; // /40
 
-    // --- Language & Technology ---
+    // Language & Technology
     const langScore = scoreLang(langLatest?.level)?.score ?? 0; // /20
     const ictPct = Number(langAll?.ICT?.score_raw ?? 0);
     const itpePct = Number(langAll?.ITPE?.score_raw ?? 0);
     const ceptObj = langAll?.CEPT ?? null;
     const techScore = scoreTech(trains.length, ictPct, itpePct, ceptObj)?.score ?? 0; // /20
 
-    return calcAllCompetencies({
-      acadScore,   // /40
-      langScore,   // /20
-      techScore,   // /20
+    // เอา social เข้า calc เดิม (จะได้ pAcad/pLang/pTech/pSocial)
+    const base = calcAllCompetencies({
+      acadScore, langScore, techScore,
       socialActs,
-      commActs,
-      // targetPointsSocial: 40,
-      // targetPointsComm: 40,
+      commActs: [], // ไม่ใช้ communication แล้ว
     });
-  }, [academic, langLatest, langAll, trains.length, socialActs, commActs, acct?.manual_gpa]);
+
+    const pAcad = base.each.acad ?? 0;
+    const pLang = base.each.lang ?? 0;
+    const pTech = base.each.tech ?? 0;
+    const pSoc  = base.each.social ?? 0;
+
+    // 🧩 Collaboration % (peer 80% + self 20%)
+    const collabPct = Math.round(0.8 * (collab.peerAvg || 0) + 0.2 * (collab.selfAvg || 0));
+
+    // รวมคะแนนถ่วงเท่ากัน 5 แกน
+    const total5 = Math.round((pAcad + pLang + pTech + pSoc + collabPct) / 5);
+
+    return {
+      each: { acad: pAcad, lang: pLang, tech: pTech, social: pSoc, collab: collabPct },
+      total: total5,
+    };
+  }, [academic, langLatest, langAll, trains.length, socialActs, acct?.manual_gpa, collab.peerAvg, collab.selfAvg]);
 
   /* ===== ฟังก์ชันแก้ไขโปรไฟล์ (ปุ่ม/โมดัล) ===== */
   const openEdit = async () => {
@@ -276,14 +312,25 @@ export default function StudentProfilePage() {
           </div>
         ) : (
           <div className="row g-4">
-            {/* ซ้าย: โปรไฟล์ + วิชาการ */}
+            {/* ซ้าย: โปรไฟล์ + สรุป */}
             <div className="col-12 col-lg-5">
               <div className="card shadow-sm border-0 rounded-4 glassy">
                 <div className="card-body">
                   <div className="d-flex align-items-start gap-3">
                     <div className="position-relative">
-                      <img src={avatar} alt="avatar" className="rounded-4 shadow-sm" style={{ width: 84, height: 84, objectFit: "cover" }} onError={(e) => (e.currentTarget.src = "/src/assets/csit.jpg")} />
-                      <button type="button" className="btn btn-sm btn-light rounded-circle position-absolute bottom-0 end-0 ripple" title="เปลี่ยนรูป" onClick={() => document.getElementById('avatarInput')?.click()}>
+                      <img
+                        src={avatar}
+                        alt="avatar"
+                        className="rounded-4 shadow-sm"
+                        style={{ width: 84, height: 84, objectFit: "cover" }}
+                        onError={(e) => (e.currentTarget.src = "/src/assets/csit.jpg")}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-light rounded-circle position-absolute bottom-0 end-0 ripple"
+                        title="เปลี่ยนรูป"
+                        onClick={() => document.getElementById('avatarInput')?.click()}
+                      >
                         <i className="bi bi-camera" />
                       </button>
                       <input id="avatarInput" type="file" accept="image/*" hidden onChange={onPickFile} />
@@ -325,10 +372,16 @@ export default function StudentProfilePage() {
                     </div>
                   </div>
 
-                  <div className="mt-2 small text-muted">กิจกรรม: สังคม {socialActs.length} รายการ · สื่อสาร {commActs.length} รายการ</div>
+                  {/* 🆕 บล็อกสรุป Collaboration */}
+                  <div className="mt-3 small">
+                    <div className="text-muted">ทำงานร่วมกับผู้อื่น (รอบ {periodKey})</div>
+                    <div>Peer Avg: <b>{Math.round(collab.peerAvg)}</b> / 100 {collab.peerCount ? `(${collab.peerCount} คนประเมิน)` : ""}</div>
+                    <div>Self Avg: <b>{Math.round(collab.selfAvg)}</b> / 100</div>
+                  </div>
+
+                  <div className="mt-2 small text-muted">กิจกรรมสังคม {socialActs.length} รายการ</div>
                 </div>
               </div>
-          
             </div>
 
             {/* ขวา: Radar */}
@@ -336,15 +389,21 @@ export default function StudentProfilePage() {
               <div className="card shadow-sm border-0 rounded-4 h-100 glassy">
                 <div className="card-body">
                   <div className="d-flex justify-content-between align-items-center mb-2">
-                    <h5 className="mb-0">เรดาร์สมรรถนะ 5 ด้าน </h5>
+                    <h5 className="mb-0">เรดาร์สมรรถนะ 5 ด้าน</h5>
                     <div className="badge text-bg-primary rounded-pill">
-                      คะแนนรวม : {comp?.totalEqual ?? 0}/100
+                      คะแนนรวม : {calc?.total ?? 0}/100
                     </div>
                   </div>
 
                   <Radar5
-                    labels={["วิชาการ", "ภาษา", "เทคโนโลยี", "สังคม", "สื่อสาร"]}
-                    values={[comp?.each?.acad ?? 0, comp?.each?.lang ?? 0, comp?.each?.tech ?? 0, comp?.each?.social ?? 0, comp?.each?.comm ?? 0]}
+                    labels={["วิชาการ", "ภาษา", "เทคโนโลยี", "สังคม", "ทำงานร่วมกับผู้อื่น"]}
+                    values={[
+                      calc?.each?.acad ?? 0,
+                      calc?.each?.lang ?? 0,
+                      calc?.each?.tech ?? 0,
+                      calc?.each?.social ?? 0,
+                      calc?.each?.collab ?? 0
+                    ]}
                     maxValues={[100, 100, 100, 100, 100]}
                     baseColor="#6f42c1"
                     theme="light"
@@ -352,11 +411,11 @@ export default function StudentProfilePage() {
                   />
 
                   <div className="d-flex flex-wrap gap-2 mt-3">
-                    <span className="badge rounded-pill bg-light text-dark">วิชาการ {comp?.each?.acad ?? 0}/100</span>
-                    <span className="badge rounded-pill bg-light text-dark">ภาษา {comp?.each?.lang ?? 0}/100</span>
-                    <span className="badge rounded-pill bg-light text-dark">เทคโนโลยี {comp?.each?.tech ?? 0}/100</span>
-                    <span className="badge rounded-pill bg-light text-dark">สังคม {comp?.each?.social ?? 0}/100</span>
-                    <span className="badge rounded-pill bg-light text-dark">สื่อสาร {comp?.each?.comm ?? 0}/100</span>
+                    <span className="badge rounded-pill bg-light text-dark">วิชาการ {calc?.each?.acad ?? 0}/100</span>
+                    <span className="badge rounded-pill bg-light text-dark">ภาษา {calc?.each?.lang ?? 0}/100</span>
+                    <span className="badge rounded-pill bg-light text-dark">เทคโนโลยี {calc?.each?.tech ?? 0}/100</span>
+                    <span className="badge rounded-pill bg-light text-dark">สังคม {calc?.each?.social ?? 0}/100</span>
+                    <span className="badge rounded-pill bg-light text-dark">ทำงานร่วมกับผู้อื่น {calc?.each?.collab ?? 0}/100</span>
                   </div>
                 </div>
               </div>
@@ -364,6 +423,7 @@ export default function StudentProfilePage() {
           </div>
         )}
       </div>
+
       {/* ===== Modal: แก้ไขโปรไฟล์ ===== */}
       {editOpen && (
         <div className="modal d-block" tabIndex="-1" style={{ backgroundColor: "rgba(0,0,0,0.5)" }}>
@@ -497,7 +557,6 @@ export default function StudentProfilePage() {
           </div>
         </div>
       )}
-
 
       {/* Bottom wave */}
       <svg className="wave" viewBox="0 0 1440 120" preserveAspectRatio="none" aria-hidden="true">

@@ -2,6 +2,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { getCompetencyProfile } from "../services/competencyApi";
+import PeerEvaluationForm from "../components/competency/PeerEvaluationForm";
 import {
   listAnnouncements,
   listMyApplications,
@@ -45,7 +47,7 @@ const timeHM = (t) => {
         hour12: false,
       });
     }
-  } catch { }
+  } catch {}
   return String(t).slice(0, 5);
 };
 const rangeLine = (p) => {
@@ -81,12 +83,47 @@ export default function HomePage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // Modal
+  // Peer eval needs
+  const [profile, setProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const periodKey = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const sem = m <= 5 ? 1 : 2;
+    return `${y}-${sem}`;
+  }, []);
+
+  // === NEW: modal state for Peer Evaluation ===
+  const [peerModalOpen, setPeerModalOpen] = useState(false);
+  const openPeerModal = () => setPeerModalOpen(true);
+  const closePeerModal = () => setPeerModalOpen(false);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let alive = true;
+    (async () => {
+      try {
+        setLoadingProfile(true);
+        const prof = await getCompetencyProfile(user.id);
+        if (!alive) return;
+        setProfile(prof || null);
+      } catch {
+        if (!alive) return;
+        setProfile(null);
+      } finally {
+        if (alive) setLoadingProfile(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [user?.id]);
+
+  // Modal (announcement detail)
   const [showModal, setShowModal] = useState(false);
   const [selectedAnnouncement, setSelectedAnnouncement] = useState(null);
 
   // แจ้งเตือน
-  const NOTI_KEY = "notif_seen_v1"; // localStorage key
+  const NOTI_KEY = user?.id ? `notif_seen_v1_${user.id}` : "notif_seen_v1_anonymous";
   const [notiOpen, setNotiOpen] = useState(false);
   const [notifItems, setNotifItems] = useState([]); // [{id, announcement_id, title, when}]
   const [unreadCount, setUnreadCount] = useState(0);
@@ -200,7 +237,7 @@ export default function HomePage() {
         const seen = loadSeen();
         setNotifItems(notifs);
         setUnreadCount(notifs.filter((n) => !seen.has(n.id)).length);
-      } catch { }
+      } catch {}
     }, 30000);
     return () => clearInterval(timer);
   }, [user?.id, annTitleById]);
@@ -420,8 +457,20 @@ export default function HomePage() {
                 </div>
                 <button type="button" className="btn btn-outline-primary rounded-pill ripple" onClick={() => navigate("/competency/form")}>ข้อมูลสมรรถนะ</button>
                 <button type="button" className="btn btn-outline-primary rounded-pill ripple" onClick={() => navigate("/profile")}>Profile</button>
+
+                {/* เปลี่ยนปุ่มนี้ให้เปิด Modal */}
+                {user?.role === "student" && (
+                  <button
+                    className="btn btn-primary btn-sm rounded-pill"
+                    onClick={openPeerModal}
+                  >
+                    ประเมินเพื่อน
+                  </button>
+                )}
               </div>
             </div>
+
+            {/* (ลบการ์ดแบบประเมินที่เคยอยู่บนหน้าออก เพื่อไม่ให้ซ้ำกับ Modal) */}
 
             {/* Results */}
             {loading ? (
@@ -491,7 +540,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Modal */}
+      {/* Modal: รายละเอียดประกาศ */}
       {showModal && selectedAnnouncement && (
         <div className="modal d-block" tabIndex="-1" style={{ backgroundColor: "rgba(0,0,0,0.5)", position: "fixed", inset: 0, overflowY: "auto", zIndex: 1050 }}>
           <div className="modal-dialog modal-dialog-centered modal-lg">
@@ -572,6 +621,46 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Modal: แบบประเมินเพื่อน */}
+      {user?.role === "student" && peerModalOpen && (
+        <div className="modal d-block" tabIndex="-1" style={{ backgroundColor: "rgba(0,0,0,0.5)", position: "fixed", inset: 0, overflowY: "auto", zIndex: 1050 }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content rounded-4">
+              <div className="modal-header border-0">
+                <h5 className="modal-title">แบบประเมินเพื่อน (รอบ {periodKey})</h5>
+                <button type="button" className="btn-close" onClick={closePeerModal}></button>
+              </div>
+              <div className="modal-body">
+                {loadingProfile ? (
+                  <div className="text-muted small">
+                    <span className="spinner-border spinner-border-sm me-2" />กำลังโหลดข้อมูล…
+                  </div>
+                ) : !profile ? (
+                  <div className="alert alert-warning mb-0 rounded-3">
+                    ไม่สามารถโหลดข้อมูลโปรไฟล์ได้ ลองรีเฟรชหน้านี้อีกครั้ง
+                  </div>
+                ) : (
+                  <PeerEvaluationForm
+                    user={user}
+                    periodKey={periodKey}
+                    profile={profile}
+                    onSubmitted={() => {
+                      // ปิด modal หลังส่ง
+                      closePeerModal();
+                      // แจ้งเตือนตามต้องการ เช่น:
+                      // toast.success("ส่งแบบประเมินแล้ว ขอบคุณ!");
+                      alert("ส่งแบบประเมินแล้ว ขอบคุณ!");
+                    }}
+                  />
+                )}
+              </div>
+              <div className="modal-footer border-0">
+                <button className="btn btn-secondary rounded-3 ripple" onClick={closePeerModal}>ปิด</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Local styles */}
       <style>{`
@@ -607,36 +696,24 @@ export default function HomePage() {
         .ripple:focus-visible { outline: 3px solid rgba(142,92,255,.45); outline-offset: 2px; }
 
         /* Background blobs */
-        html, body {
-  overflow-x: hidden;
-}
-
-/* ป้องกัน blob ล้นจอ */
-.bg-blob {
-  position: absolute;
-  filter: blur(60px);
-  opacity: .55;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-  max-width: 100vw;
-  will-change: transform;
-}
-
-/* ให้ container หลักไม่ล้น */
-.bg-animated {
-  overflow-x: hidden;
-  width: 100%;
-  max-width: 100vw;
-}
+        html, body { overflow-x: hidden; }
+        .bg-blob {
+          position: absolute;
+          filter: blur(60px);
+          opacity: .55;
+          z-index: 0;
+          pointer-events: none;
+          overflow: hidden;
+          max-width: 100vw;
+          will-change: transform;
+        }
+        .bg-animated { overflow-x: hidden; width: 100%; max-width: 100vw; }
         .bg-blob-1 { width: 420px; height: 420px; left: -120px; top: -80px; background: #d7c6ff; animation: drift1 18s ease-in-out infinite; }
         .bg-blob-2 { width: 360px; height: 360px; right: -120px; top: 120px; background: #c6ddff; animation: drift2 22s ease-in-out infinite; }
         .bg-blob-3 { width: 300px; height: 300px; left: 15%; bottom: -120px; background: #ffd9ec; animation: drift3 20s ease-in-out infinite; }
         @keyframes drift1 { 0%,100%{ transform: translate(0,0) } 50%{ transform: translate(20px,10px) } }
         @keyframes drift2 { 0%,100%{ transform: translate(0,0) } 50%{ transform: translate(-16px,8px) } }
         @keyframes drift3 { 0%,100%{ transform: translate(0,0) } 50%{ transform: translate(12px,-12px) } }
-
-     
       `}</style>
 
       {/* tiny script to position ripple center under cursor */}

@@ -34,6 +34,7 @@ function loadRouter(modPath) {
 }
 
 const contactRouter = require("./routes/contact");
+const peerRoutes = require("./routes/peer"); 
 
 /* ====== Mount routes ====== */
 app.use("/api", loadRouter("./routes/auth"));
@@ -45,6 +46,7 @@ app.use("/api/majors", loadRouter("./routes/majors"));
 app.use("/api/accounts", loadRouter("./routes/accounts")); // ✅ route โปรไฟล์
 app.use("/uploads", express.static(require("path").join(__dirname, "uploads"))); // ✅ เสิร์ฟไฟล์รูป
 app.use("/api/contact", contactRouter);
+app.use("/api/peer", peerRoutes)
 
 /* ====== Health ====== */
 app.get("/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));

@@ -9,6 +9,7 @@ import LanguageSection from "../components/competency/LanguageSection";
 import TechSection from "../components/competency/TechSection";
 import ActivitiesSection from "../components/competency/ActivitiesSection";
 import ScorePreview from "../components/competency/ScorePreview";
+import WorkCollaborationForm from "../components/competency/WorkCollaborationForm";
 
 // apis
 import {
@@ -131,7 +132,7 @@ export default function CompetencyFormPage() {
       { key: "language", label: "2) ภาษา (CEPT)", icon: "bi-translate" },
       { key: "tech", label: "3) ทักษะเทคโนโลยี", icon: "bi-cpu" },
       { key: "social", label: "4) กิจกรรมทางสังคม", icon: "bi-people" },
-      { key: "comm", label: "5) การสื่อสาร", icon: "bi-megaphone" },
+      { key: "comm", label: "5) การทำงานเป็นทีม", icon: "bi-people" },
     ],
     []
   );
@@ -167,7 +168,8 @@ export default function CompetencyFormPage() {
     if (languageData || (langAll && (langAll.ICT || langAll.ITPE))) p += 1;
     if ((techData.certs || []).length || (techData.trainings || []).length) p += 1;
     if ((activityData.social || []).length) p += 1;
-    if ((activityData.communication || []).length) p += 1;
+    const hasSelfEval = (activityData.communication || []).some(a => a.subtype === 'self-eval');
+    if (hasSelfEval) p += 1;
     return Math.round((p / 5) * 100);
   }, [academicData, languageData, langAll, techData, activityData]);
 
@@ -246,7 +248,7 @@ export default function CompetencyFormPage() {
             {active === "language" && <LanguageSection user={user} preloaded={languageData} />}
             {active === "tech" && <TechSection user={user} preloaded={techData} langAll={langAll} />}
             {active === "social" && <ActivitiesSection user={user} category="social" preloaded={activityData.social} />}
-            {active === "comm" && <ActivitiesSection user={user} category="communication" preloaded={activityData.communication} />}
+            {active === "comm" && <WorkCollaborationForm user={user} />}
           </div>
         </div>
       </div>
@@ -291,7 +293,8 @@ export default function CompetencyFormPage() {
       `}</style>
 
       {/* ripple positioning script */}
-      <script dangerouslySetInnerHTML={{ __html: `
+      <script dangerouslySetInnerHTML={{
+        __html: `
         document.addEventListener('pointerdown', (e) => {
           const el = e.target.closest('.ripple');
           if (!el) return;

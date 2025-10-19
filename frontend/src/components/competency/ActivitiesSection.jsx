@@ -26,10 +26,10 @@ const SUBTYPE_OPTIONS = [
   { value: "กิจกรรมเลือกเสรี", label: "กิจกรรมเลือกเสรี" },
 ];
 
-export default function ActivitiesSection({ user, category }) {
-  const [items, setItems] = useState([]);
+export default function ActivitiesSection({ user }) {
+  const category = "social"; // 🔒 fix ให้แสดงเฉพาะกิจกรรมด้านสังคม
 
-  // ฟอร์มเพิ่ม
+  const [items, setItems] = useState([]);
   const [title, setTitle] = useState("");
   const [subtype, setSubtype] = useState("กิจกรรมกลาง");
   const [role, setRole] = useState("participant");
@@ -38,7 +38,6 @@ export default function ActivitiesSection({ user, category }) {
   const [to, setTo] = useState("");
   const [proof, setProof] = useState("");
 
-  // โหมดแก้ไข
   const [editingId, setEditingId] = useState(null);
   const [edit, setEdit] = useState({
     title: "",
@@ -57,7 +56,7 @@ export default function ActivitiesSection({ user, category }) {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line
-  }, [category]);
+  }, []);
 
   const onAdd = async () => {
     if (!title.trim()) return alert("กรอกชื่อกิจกรรม");
@@ -140,9 +139,7 @@ export default function ActivitiesSection({ user, category }) {
 
   return (
     <div>
-      <h6 className="mb-2">
-        {category === "social" ? "กิจกรรมด้านสังคม" : "กิจกรรมด้านการสื่อสาร"}
-      </h6>
+      <h6 className="mb-2">กิจกรรมด้านสังคม</h6>
 
       <div className="table-responsive">
         <table className="table align-middle">
@@ -152,6 +149,8 @@ export default function ActivitiesSection({ user, category }) {
               <th>ประเภท</th>
               <th>บทบาท</th>
               <th>ชั่วโมง</th>
+              <th style={{ minWidth: 220 }}>ช่วงเวลา</th>
+              <th style={{ minWidth: 160 }}>หลักฐาน</th>
               <th className="text-end" style={{ width: 160 }} />
             </tr>
           </thead>
@@ -174,7 +173,6 @@ export default function ActivitiesSection({ user, category }) {
                     )}
                   </td>
 
-                  {/* ✅ ประเภทย่อย */}
                   <td>
                     {isEdit ? (
                       <select
@@ -195,7 +193,6 @@ export default function ActivitiesSection({ user, category }) {
                     )}
                   </td>
 
-                  {/* บทบาท */}
                   <td>
                     {isEdit ? (
                       <select
@@ -226,7 +223,6 @@ export default function ActivitiesSection({ user, category }) {
                     )}
                   </td>
 
-                  {/* ชั่วโมง */}
                   <td style={{ width: 120 }}>
                     {isEdit ? (
                       <input
@@ -243,7 +239,6 @@ export default function ActivitiesSection({ user, category }) {
                     )}
                   </td>
 
-                  {/* ช่วงเวลา */}
                   <td style={{ minWidth: 220 }}>
                     {isEdit ? (
                       <div className="d-flex gap-1">
@@ -252,7 +247,10 @@ export default function ActivitiesSection({ user, category }) {
                           type="date"
                           value={edit.date_from}
                           onChange={(e) =>
-                            setEdit((s) => ({ ...s, date_from: e.target.value }))
+                            setEdit((s) => ({
+                              ...s,
+                              date_from: e.target.value,
+                            }))
                           }
                         />
                         <span className="align-self-center">~</span>
@@ -261,7 +259,10 @@ export default function ActivitiesSection({ user, category }) {
                           type="date"
                           value={edit.date_to}
                           onChange={(e) =>
-                            setEdit((s) => ({ ...s, date_to: e.target.value }))
+                            setEdit((s) => ({
+                              ...s,
+                              date_to: e.target.value,
+                            }))
                           }
                         />
                       </div>
@@ -270,7 +271,6 @@ export default function ActivitiesSection({ user, category }) {
                     )}
                   </td>
 
-                  {/* หลักฐาน */}
                   <td style={{ minWidth: 160 }}>
                     {isEdit ? (
                       <input
@@ -285,11 +285,7 @@ export default function ActivitiesSection({ user, category }) {
                         placeholder="URL"
                       />
                     ) : it.proof_url ? (
-                      <a
-                        href={it.proof_url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
+                      <a href={it.proof_url} target="_blank" rel="noreferrer">
                         link
                       </a>
                     ) : (
@@ -297,7 +293,6 @@ export default function ActivitiesSection({ user, category }) {
                     )}
                   </td>
 
-                  {/* actions */}
                   <td className="text-end">
                     {isEdit ? (
                       <div className="btn-group btn-group-sm">
@@ -410,6 +405,16 @@ export default function ActivitiesSection({ user, category }) {
               type="date"
               value={to}
               onChange={(e) => setTo(e.target.value)}
+            />
+          </div>
+          <div className="col-md-3">
+            <label className="form-label">หลักฐาน (URL)</label>
+            <input
+              className="form-control"
+              type="url"
+              placeholder="https://..."
+              value={proof}
+              onChange={(e) => setProof(e.target.value)}
             />
           </div>
           <div className="col-12">

@@ -7,13 +7,11 @@ import {
   getCompetencyProfile,
   getLatestLanguagesAll,
   listTrainings,
-  listActivities,
+  listActivities,            // ใช้เฉพาะ social
   recalcAcademic,
-  // ต้องมีใน services/competencyApi ชี้ไปที่ backend:
-  // GET  /api/competency/courses/required?major=&year=&sem=
-  // GET  /api/competency/courses/grades/:accountId   (ไม่ใส่ year/sem)
   getRequiredCourses,
-  listCourseGrades,
+  getSavedGrades as listCourseGrades,
+  peer, // ใช้สรุปผลประเมินเพื่อน/ตนเอง
 } from "../../services/competencyApi";
 import Radar5 from "../profile/Radar5";
 import {
@@ -22,6 +20,7 @@ import {
   calcAllCompetencies,
   scoreAcademic,
   toArray,
+  scoreCollaboration,       // ✅ ใช้สูตรถ่วงน้ำหนัก Peer 80% : Self 20%      
 } from "../../utils/scoring";
 
 const API_BASE = (import.meta.env?.VITE_API_BASE || "http://localhost:3000").replace(/\/+$/, "");
@@ -44,14 +43,11 @@ const Chip = ({ active, onClick, children }) => (
   </button>
 );
 
-/* ================= Helpers: เกรด/โค้ด ================= */
 const normalizeGrade = (g) => {
   if (g == null) return null;
-  let s = String(g).trim().toUpperCase();
-  if (s === "A+") s = "A";
-  if (s === "P" || s === "PASS") s = "S";
-  if (s === "NP" || s === "N/P") s = "U";
-  return s;
+  const s = String(g).trim().toUpperCase();
+  const m = /^([ABCDF](\+)?|S|U)$/.exec(s);
+  return m ? m[1] : null;
 };
 
 const isPassedLetter = (letterRaw) => {
@@ -80,6 +76,33 @@ const pickGradeByCode = (gmap, rawCode) => {
     keys.find((k) => variants.has(String(k).trim().toLowerCase()));
   return hit ? gmap[hit] : null;
 };
+
+/* ===== Helper: แปลงผลจาก /peer/received → peerAvg(0..100), peerCount ===== */
+function extractPeerSummary(rec) {
+  // รูปแบบ backend: { items, summary: { count, avg: {communication,teamwork,...}, period_key } }
+  let peerCount = Number(rec?.summary?.count ?? rec?.count ?? 0) || 0;
+
+  // 1) ถ้าได้ avg object (1..5) → เฉลี่ยแล้ว normalize เป็น 0..100
+  if (rec?.summary?.avg && typeof rec.summary.avg === "object") {
+    const obj = rec.summary.avg;
+    const vals = ["communication", "teamwork", "responsibility", "cooperation", "adaptability"]
+      .map((k) => Number(obj[k])).filter((v) => Number.isFinite(v) && v > 0);
+    if (vals.length) {
+      const mean15 = vals.reduce((s, v) => s + v, 0) / vals.length; // 1..5
+      return { peerAvg: normalizePeerScore(mean15), peerCount };
+    }
+  }
+
+  // 2) ถ้ามีค่าเฉลี่ยรวมรูปอื่น
+  const any = Number(rec?.avg ?? rec?.summary?.peer_avg ?? 0);
+  if (Number.isFinite(any) && any > 0) {
+    // เดาว่าอาจเป็น 1..5 หรือ 0..100
+    if (any <= 5) return { peerAvg: normalizePeerScore(any), peerCount };
+    return { peerAvg: Math.max(0, Math.min(100, any)), peerCount };
+  }
+
+  return { peerAvg: 0, peerCount };
+}
 /* ======================================================= */
 
 export default function StudentInfoPage() {
@@ -90,6 +113,13 @@ export default function StudentInfoPage() {
     if (!user) { navigate("/login"); return; }
     if (user.role !== "teacher") navigate("/home");
   }, [user, navigate]);
+
+  // ช่วง/รหัสรอบประเมิน (เช่น 2025-1)
+  const periodKey = useMemo(() => {
+    const d = new Date(); const y = d.getFullYear(); const m = d.getMonth() + 1;
+    const sem = m <= 5 ? 1 : 2; // ปรับ logic ได้
+    return `${y}-${sem}`;
+  }, []);
 
   const [loading, setLoading] = useState(true);
   const [majors, setMajors] = useState([]);
@@ -152,6 +182,7 @@ export default function StudentInfoPage() {
                 avatar_url: acct.avatar_url ?? "",
                 total_competency: null,
                 comp_each: null,
+                collab: null, // เก็บ Collaboration (peer/self)
               };
             } else {
               baseMap[id] = {
@@ -161,13 +192,14 @@ export default function StudentInfoPage() {
                 avatar_url: "",
                 total_competency: null,
                 comp_each: null,
+                collab: null,
               };
             }
           });
         }
         setEnrich(baseMap);
 
-        // คำนวณคะแนนรวม 5 ด้าน (เฉลี่ยทุกปี/เทอม)
+        // คำนวณคะแนนรวม 5 ด้าน (แทน “การสื่อสาร” เป็น “ทำงานร่วมกับผู้อื่น”)
         const CH2 = 8;
         for (let i = 0; i < ids.length; i += CH2) {
           const chunk = ids.slice(i, i + CH2);
@@ -201,27 +233,60 @@ export default function StudentInfoPage() {
               });
               const acadScore = acadObj.score;
 
-              const [langs, trainings, social, comm] = await Promise.all([
-                getLatestLanguagesAll(id).catch(() => ({})),
-                listTrainings(id).catch(() => ({ items: [] })),
-                listActivities(id, "social").catch(() => ({ items: [] })),
-                listActivities(id, "communication").catch(() => ({ items: [] })),
-              ]);
+              // ===== ภาษา/เทคโนโลยี =====
+              const langs = await getLatestLanguagesAll(id).catch(() => ({}));
+              const trainingsResp = await listTrainings(id).catch(() => ({ items: [] }));
+              const socialResp = await listActivities(id, "social").catch(() => ({ items: [] }));
+
               const cept = langs?.CEPT ?? null;
-              const langScore = scoreLang(cept?.level)?.score ?? 0;
+              const langScore = scoreLang(cept?.level)?.score ?? 0;               // ✅ ใช้ CEPT ล่าสุด
               const ictPct = Number(langs?.ICT?.score_raw ?? 0);
               const itpePct = Number(langs?.ITPE?.score_raw ?? 0);
-              const techScore = scoreTech(toArray(trainings).length, ictPct, itpePct, cept)?.score ?? 0;
 
-              const comp = calcAllCompetencies({
+              const trainingsArr = toArray(trainingsResp?.items || trainingsResp); // ✅ รองรับสองรูปแบบ
+              const techScore = scoreTech(trainingsArr.length, ictPct, itpePct, cept)?.score ?? 0;
+
+              const socialActs = toArray(socialResp?.items || socialResp);
+
+              const tmp = calcAllCompetencies({
                 acadScore,
                 langScore,
                 techScore,
-                socialActs: toArray(social),
-                commActs: toArray(comm),
+                socialActs,
+                commActs: [], // ไม่ใช้ communication
               });
+              const pAcad = tmp.each?.acad ?? 0;
+              const pLang = tmp.each?.lang ?? 0;
+              const pTech = tmp.each?.tech ?? 0;
+              const pSoc  = tmp.each?.social ?? 0;
 
-              return { id, total_competency: comp.totalEqual, comp_each: comp.each };
+              // ===== Collaboration (peer + self) =====
+              let peerAvg = 0, selfAvg = 0, peerCount = 0;
+              try {
+                const rec = await peer.received(id, periodKey);
+                const sum = extractPeerSummary(rec);
+                peerAvg = sum.peerAvg;
+                peerCount = sum.peerCount;
+              } catch {}
+              try {
+                const self = await (peer.self ? peer.self(id, periodKey) : peer.given(id, periodKey));
+                // self.avg ควรเป็น 0..100 อยู่แล้ว (หรือ 1..5 ให้ normalize)
+                const s = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+                selfAvg = s <= 5 ? normalizePeerScore(s) : Math.max(0, Math.min(100, s));
+              } catch {}
+
+              const { score: collabScore } = scoreCollaboration({ self: selfAvg, peerAvg }); // ✅ Peer 80 : Self 20
+
+              // รวม 5 ด้านแบบถ่วงเท่ากัน
+              const each = { acad: pAcad, lang: pLang, tech: pTech, social: pSoc, collab: collabScore };
+              const totalEqual = Math.round((each.acad + each.lang + each.tech + each.social + each.collab) / 5);
+
+              return {
+                id,
+                total_competency: totalEqual,
+                comp_each: each,
+                collab: { peerAvg, selfAvg, peerCount, periodKey },
+              };
             })
           );
 
@@ -229,8 +294,8 @@ export default function StudentInfoPage() {
             const nn = { ...prev };
             enriched.forEach((r) => {
               if (r.status === "fulfilled" && r.value) {
-                const { id, total_competency, comp_each } = r.value;
-                nn[id] = { ...(nn[id] || {}), total_competency, comp_each };
+                const { id, total_competency, comp_each, collab } = r.value;
+                nn[id] = { ...(nn[id] || {}), total_competency, comp_each, collab };
               }
             });
             return nn;
@@ -244,7 +309,7 @@ export default function StudentInfoPage() {
       }
     };
     run();
-  }, [user?.role]);
+  }, [user?.role, periodKey]);
 
   const majorNameById = useMemo(() => {
     const m = {};
@@ -283,47 +348,68 @@ export default function StudentInfoPage() {
     profile: null,
     languages: null,
     trainings: [],
-    activities: { social: [], communication: [] },
+    activities: { social: [] }, // ไม่มี communication แล้ว
     radar: null,
     calc: null,
-    requiredAll: [], // [{year, sem, code, name_th, credit, grade, passed}]
+    requiredAll: [],
+    collab: null, // เก็บสรุป collaboration สำหรับ modal
   });
   const modalRef = useRef(null);
 
-  const buildCalc = ({ profile, languages, trainings, activities, avgGpa25, avgCore15 }) => {
+  const buildCalc = ({ profile, languages, trainings, activities, avgGpa25, avgCore15, collab }) => {
     const acadObj = scoreAcademic({
       manualGpa: profile?.account?.manual_gpa,
       scoreGpa25: avgGpa25 ?? 0,
       scoreCore15: avgCore15 ?? 0,
     });
     const acadScore = acadObj.score;
+
     const cept = languages?.CEPT ?? null;
     const langScore = scoreLang(cept?.level)?.score ?? 0;
+
     const ictPct = Number(languages?.ICT?.score_raw ?? 0);
     const itpePct = Number(languages?.ITPE?.score_raw ?? 0);
-    const techScore = scoreTech(toArray(trainings).length, ictPct, itpePct, cept)?.score ?? 0;
 
-    const comp = calcAllCompetencies({
-      acadScore,
-      langScore,
-      techScore,
-      socialActs: toArray(activities?.social),
-      commActs: toArray(activities?.communication),
+    const trainingsArr = toArray(trainings?.items || trainings);
+    const techScore = scoreTech(trainingsArr.length, ictPct, itpePct, cept)?.score ?? 0;
+
+    const socialActs = toArray(activities?.social);
+
+    const tmp = calcAllCompetencies({
+      acadScore,                     // /40
+      langScore,                     // /20
+      techScore,                     // /20
+      socialActs,                    // hours → points → %
+      commActs: [],                  // ไม่ใช้ communication
+    });
+    const pAcad = tmp.each?.acad ?? 0;   // 0–100
+    const pLang = tmp.each?.lang ?? 0;   // 0–100
+    const pTech = tmp.each?.tech ?? 0;   // 0–100
+    const pSoc  = tmp.each?.social ?? 0; // 0–100
+
+    // ===== Collaboration (modal) — ใช้สูตรเดียวกัน =====
+    const { score: collabScore } = scoreCollaboration({
+      peerAvg: collab?.peerAvg || 0,
+      self:    collab?.selfAvg || 0,
     });
 
+    const each = { acad: pAcad, lang: pLang, tech: pTech, social: pSoc, collab: collabScore };
+    const total = Math.round((each.acad + each.lang + each.tech + each.social + each.collab) / 5);
+
     const explain = [
-      `วิชาการ ${Math.round(comp.each.acad)}/100`,
-      `ภาษา ${Math.round(comp.each.lang)}/100`,
-      `เทคโนโลยี ${Math.round(comp.each.tech)}/100`,
-      `สังคม ${Math.round(comp.each.social)}/100`,
-      `สื่อสาร ${Math.round(comp.each.comm)}/100`,
+      `วิชาการ ${Math.round(each.acad)}/100`,
+      `ภาษา ${Math.round(each.lang)}/100`,
+      `เทคโนโลยี ${Math.round(each.tech)}/100`,
+      `สังคม ${Math.round(each.social)}/100`,
+      `ทำงานร่วมกับผู้อื่น ${Math.round(each.collab)}/100`,
     ];
     return {
       radar: {
-        labels: ["วิชาการ", "ภาษา", "เทคโนโลยี", "สังคม", "สื่อสาร"],
-        values: [comp.each.acad, comp.each.lang, comp.each.tech, comp.each.social, comp.each.comm],
+        labels: ["วิชาการ", "ภาษา", "เทคโนโลยี", "สังคม", "ทำงานร่วมกับผู้อื่น"],
+        values: [each.acad, each.lang, each.tech, each.social, each.collab],
+        maxValues: [100, 100, 100, 100, 100],
       },
-      calc: { total: comp.totalEqual, explain, acadObj },
+      calc: { total, explain, acadObj, each },
     };
   };
 
@@ -332,12 +418,11 @@ export default function StudentInfoPage() {
     setDetailOpen(true);
     setDetailLoading(true);
     try {
-      const [profileRaw, languages, trainings, social, comm] = await Promise.all([
+      const [profileRaw, languages, trainings, social] = await Promise.all([
         getCompetencyProfile(acc.id),
         getLatestLanguagesAll(acc.id).catch(() => ({})),
         listTrainings(acc.id).catch(() => ({ items: [] })),
         listActivities(acc.id, "social").catch(() => ({ items: [] })),
-        listActivities(acc.id, "communication").catch(() => ({ items: [] })),
       ]);
 
       // รวมผลวิชาการทุกเทอม
@@ -360,9 +445,9 @@ export default function StudentInfoPage() {
       const allGradesResp = await listCourseGrades(acc.id).catch(() => null);
       let gmapAll = {};
       if (allGradesResp?.map && typeof allGradesResp.map === "object") {
-        gmapAll = allGradesResp.map; // โครงสร้าง backend นี้
+        gmapAll = allGradesResp.map;
       } else if (allGradesResp?.grades && typeof allGradesResp.grades === "object") {
-        gmapAll = allGradesResp.grades; // เผื่อ backend อื่น
+        gmapAll = allGradesResp.grades;
       } else if (Array.isArray(allGradesResp?.items)) {
         for (const it of allGradesResp.items) {
           const k = it.course_code || it.code;
@@ -392,24 +477,41 @@ export default function StudentInfoPage() {
         }
       }
 
+      // สรุป Collaboration สำหรับ modal
+      let peerAvg = 0, selfAvg = 0, peerCount = 0;
+      try {
+        const rec = await peer.received(acc.id, periodKey);
+        const sum = extractPeerSummary(rec);
+        peerAvg = sum.peerAvg;
+        peerCount = sum.peerCount;
+      } catch {}
+      try {
+        const self = await (peer.self ? peer.self(acc.id, periodKey) : peer.given(acc.id, periodKey));
+        const s = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+        selfAvg = s <= 5 ? normalizePeerScore(s) : Math.max(0, Math.min(100, s));
+      } catch {}
+      const collabSummary = { peerAvg, selfAvg, peerCount, periodKey };
+
       const profile = { ...profileRaw };
       const { radar, calc } = buildCalc({
         profile,
         languages,
         trainings,
-        activities: { social, communication: comm },
+        activities: { social },
         avgGpa25,
         avgCore15,
+        collab: collabSummary,
       });
 
       setDetail({
         profile,
         languages,
         trainings,
-        activities: { social, communication: comm },
+        activities: { social },
         radar,
         calc,
         requiredAll: requiredRows,
+        collab: collabSummary,
       });
     } catch (e) {
       console.error(e);
@@ -485,6 +587,28 @@ export default function StudentInfoPage() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
+                <div className="ms-auto d-flex align-items-center gap-2">
+                  {(user?.role === "teacher" || user?.role === "admin") && (
+                    <>
+                      <button
+                        className="btn btn-outline-light btn-sm rounded-pill ripple"
+                        onClick={() => navigate("/teacher-announcements")}
+                        title="จัดการประกาศ"
+                        aria-label="จัดการประกาศ"
+                      >
+                        <i className="bi bi-megaphone me-1" /> จัดการประกาศ
+                      </button>
+                      <button
+                        className="btn btn-warning btn-sm rounded-pill ripple"
+                        onClick={() => navigate("/create-announcement")}
+                        title="เพิ่มประกาศ"
+                        aria-label="เพิ่มประกาศ"
+                      >
+                        <i className="bi bi-plus-circle me-1" /> เพิ่มประกาศ
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -521,7 +645,6 @@ export default function StudentInfoPage() {
                       : "linear-gradient(135deg, #6c757d, #adb5bd)";
                 const manualGpa = enrich[acc.id]?.manual_gpa ?? "—";
                 const yearLevel = enrich[acc.id]?.year_level ?? "—";
-                const computedGpa = enrich[acc.id]?.computed_gpa ?? "—";
                 const totalComp = enrich[acc.id]?.total_competency;
                 const avatar = absUrl(enrich[acc.id]?.avatar_url);
 
@@ -539,7 +662,7 @@ export default function StudentInfoPage() {
                           <img
                             src={avatar}
                             alt="avatar"
-                            onError={(e)=>{e.currentTarget.src = DEFAULT_AVATAR;}}
+                            onError={(e) => { e.currentTarget.src = DEFAULT_AVATAR; }}
                             className="rounded-circle"
                             style={{ width: 40, height: 40, objectFit: "cover" }}
                           />
@@ -556,12 +679,8 @@ export default function StudentInfoPage() {
 
                         <div className="row small mb-2">
                           <div className="col-6">
-                            <div className="text-muted">GPA (กรอกเอง)</div>
+                            <div className="text-muted">GPAX</div>
                             <div className="fw-medium">{manualGpa}</div>
-                          </div>
-                          <div className="col-6">
-                            <div className="text-muted">GPA (คำนวณ)</div>
-                            <div className="fw-medium">{computedGpa}</div>
                           </div>
                         </div>
 
@@ -606,7 +725,7 @@ export default function StudentInfoPage() {
                       <img
                         src={absUrl(detail?.profile?.account?.avatar_url)}
                         alt="avatar"
-                        onError={(e)=>{e.currentTarget.src = DEFAULT_AVATAR;}}
+                        onError={(e) => { e.currentTarget.src = DEFAULT_AVATAR; }}
                         className="rounded-4"
                         style={{ width: 80, height: 80, objectFit: "cover" }}
                       />
@@ -629,14 +748,7 @@ export default function StudentInfoPage() {
                           </div>
                         </div>
                       </div>
-                      <div className="col-6 col-lg-3">
-                        <div className="card border-0 shadow-sm rounded-4 h-100">
-                          <div className="card-body">
-                            <div className="text-muted small">GPA (คำนวณ)</div>
-                            <div className="fs-5 fw-semibold">{detail?.profile?.computed_gpa ?? "—"}</div>
-                          </div>
-                        </div>
-                      </div>
+
                       <div className="col-6 col-lg-3">
                         <div className="card border-0 shadow-sm rounded-4 h-100">
                           <div className="card-body">
@@ -655,6 +767,18 @@ export default function StudentInfoPage() {
                           </div>
                         </div>
                       </div>
+
+                      {/* สรุปทำงานร่วมกับผู้อื่น */}
+                      <div className="col-12 col-lg-3">
+                        <div className="card border-0 shadow-sm rounded-4 h-100">
+                          <div className="card-body">
+                            <div className="text-muted small">ทำงานร่วมกับผู้อื่น (รอบ {detail?.collab?.periodKey || periodKey})</div>
+                            <div className="small">Peer Avg: <b>{Math.round(detail?.collab?.peerAvg ?? 0)}</b> / 100</div>
+                            <div className="small">Self Avg: <b>{Math.round(detail?.collab?.selfAvg ?? 0)}</b> / 100</div>
+                            <div className="small">จำนวนเพื่อนที่ประเมิน: <b>{detail?.collab?.peerCount ?? 0}</b></div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Radar + ผลคำนวณ */}
@@ -665,7 +789,7 @@ export default function StudentInfoPage() {
                             <h6 className="fw-semibold mb-2">เรดาร์สมรรถนะ 5 ด้าน</h6>
                             <div className="badge text-bg-primary rounded-pill">คะแนนรวม: {detail.calc.total}/100</div>
                           </div>
-                          <Radar5 labels={detail.radar.labels} values={detail.radar.values} maxValues={[100, 100, 100, 100, 100]} />
+                          <Radar5 labels={detail.radar.labels} values={detail.radar.values} maxValues={detail.radar.maxValues} />
                           <div className="mt-3 small">{detail.calc.explain.join(" · ")}</div>
                         </div>
                       </div>
@@ -673,6 +797,7 @@ export default function StudentInfoPage() {
 
                     {/* ภาษา / เทคโนโลยี / กิจกรรม */}
                     <div className="row g-3">
+                      {/* ภาษา */}
                       <div className="col-12 col-xl-6">
                         <div className="card border-0 shadow-sm rounded-4 h-100">
                           <div className="card-body">
@@ -699,19 +824,38 @@ export default function StudentInfoPage() {
                         </div>
                       </div>
 
+                      {/* เทคโนโลยี & อบรม */}
                       <div className="col-12 col-xl-6">
                         <div className="card border-0 shadow-sm rounded-4 h-100">
                           <div className="card-body">
                             <div className="fw-semibold mb-2">เทคโนโลยี & อบรม</div>
-                            {toArray(detail.trainings).length ? (
+                            {toArray(detail.trainings?.items || detail.trainings).length ? (
                               <ul className="list-group list-group-flush">
-                                {toArray(detail.trainings).map((t) => (
-                                  <li key={t.id} className="list-group-item px-0">
+                                {toArray(detail.trainings?.items || detail.trainings).map((t) => (
+                                  <li key={t.id ?? `${t.title}-${t.hours ?? "0"}`} className="list-group-item px-0">
                                     {t.title} {t.hours ? `(${t.hours} ชม.)` : ""}
                                   </li>
                                 ))}
                               </ul>
                             ) : <div className="text-muted small">ยังไม่มีข้อมูลการอบรม</div>}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* สังคม (Social) */}
+                      <div className="col-12">
+                        <div className="card border-0 shadow-sm rounded-4 h-100">
+                          <div className="card-body">
+                            <div className="fw-semibold mb-2">กิจกรรมสังคม (Social)</div>
+                            {toArray(detail.activities?.social).length ? (
+                              <ul className="list-group list-group-flush">
+                                {toArray(detail.activities.social).map((a) => (
+                                  <li key={a.id ?? `${a.title}-${a.hours ?? "0"}`} className="list-group-item px-0">
+                                    {a.title} {a.hours ? `— ${a.hours} ชม.` : ""} {a.role ? `(${a.role})` : ""}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : <div className="text-muted small">ยังไม่มีกิจกรรมสังคม</div>}
                           </div>
                         </div>
                       </div>
@@ -726,13 +870,13 @@ export default function StudentInfoPage() {
                                 <table className="table table-sm align-middle">
                                   <thead>
                                     <tr>
-                                      <th style={{width: 80}}>ปี</th>
-                                      <th style={{width: 80}}>เทอม</th>
-                                      <th style={{width: 120}}>รหัส</th>
+                                      <th style={{ width: 80 }}>ปี</th>
+                                      <th style={{ width: 80 }}>เทอม</th>
+                                      <th style={{ width: 120 }}>รหัส</th>
                                       <th>ชื่อรายวิชา</th>
-                                      <th style={{width: 80}}>หน่วยกิต</th>
-                                      <th style={{width: 80}}>เกรด</th>
-                                      <th style={{width: 120}}>สถานะ</th>
+                                      <th style={{ width: 80 }}>หน่วยกิต</th>
+                                      <th style={{ width: 80 }}>เกรด</th>
+                                      <th style={{ width: 120 }}>สถานะ</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -749,7 +893,7 @@ export default function StudentInfoPage() {
                                           <td>
                                             {row.passed === null ? <span className="badge text-bg-secondary">รอผล</span>
                                               : row.passed ? <span className="badge text-bg-success">ผ่าน</span>
-                                              : <span className="badge text-bg-danger">ไม่ผ่าน</span>}
+                                                : <span className="badge text-bg-danger">ไม่ผ่าน</span>}
                                           </td>
                                         </tr>
                                       ))}
@@ -776,7 +920,7 @@ export default function StudentInfoPage() {
         </div>
       )}
 
-      {/* style */}
+      {/* local styles */}
       <style>{`
         .bg-animated{background:radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),radial-gradient(1000px 500px at 110% 10%, #e6f0ff 10%, transparent 55%),linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%);} 
         .glassy{backdrop-filter:blur(8px);} 
@@ -802,15 +946,17 @@ export default function StudentInfoPage() {
       `}</style>
 
       {/* ripple position helper */}
-      <script dangerouslySetInnerHTML={{ __html: `
-        document.addEventListener('pointerdown', (e) => {
-          const el = e.target.closest('.ripple');
-          if (!el) return;
-          const rect = el.getBoundingClientRect();
-          el.style.setProperty('--x', ((e.clientX - rect.left) / rect.width * 100).toFixed(2) + '%');
-          el.style.setProperty('--y', ((e.clientY - rect.top) / rect.height * 100).toFixed(2) + '%');
-        }, { passive: true });
-      `}} />
+      <script dangerouslySetInnerHTML={{
+        __html: `
+          document.addEventListener('pointerdown', (e) => {
+            const el = e.target.closest('.ripple');
+            if (!el) return;
+            const rect = el.getBoundingClientRect();
+            el.style.setProperty('--x', ((e.clientX - rect.left) / rect.width * 100).toFixed(2) + '%');
+            el.style.setProperty('--y', ((e.clientY - rect.top) / rect.height * 100).toFixed(2) + '%');
+          }, { passive: true });
+        `
+      }} />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// src/pages/ApplicantsManagePage.jsx — refined UI (with Swal + capacity guard)
+// src/pages/ApplicantsManagePage.jsx — refined UI (with Swal + capacity guard + completed)
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getAnnouncement, listApplicants, changeApplicationStatus } from "../../services/announcementsApi";
@@ -10,9 +10,14 @@ const StatusBadge = ({ status }) => {
       ? "badge text-bg-success"
       : status === "rejected"
         ? "badge text-bg-danger"
-        : "badge text-bg-secondary";
+        : status === "completed"
+          ? "badge text-bg-info"
+          : "badge text-bg-secondary";
   const label =
-    status === "accepted" ? "อนุมัติแล้ว" : status === "rejected" ? "ปฏิเสธแล้ว" : "รอดำเนินการ";
+    status === "accepted" ? "อนุมัติแล้ว"
+    : status === "rejected" ? "ปฏิเสธแล้ว"
+    : status === "completed" ? "เสร็จสิ้น"
+    : "รอดำเนินการ";
   return <span className={cls}>{label}</span>;
 };
 
@@ -37,7 +42,7 @@ export default function ApplicantsManagePage() {
   const [err, setErr] = useState("");
   const [search, setSearch] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all"); // all | pending | accepted | rejected
+  const [statusFilter, setStatusFilter] = useState("all"); // all | pending | accepted | rejected | completed
   const [actingId, setActingId] = useState(null); // แสดงสปินเนอร์เฉพาะแถวที่กำลังกด
   const [liveMsg, setLiveMsg] = useState("");
 
@@ -69,6 +74,7 @@ export default function ApplicantsManagePage() {
   const acceptedCount = useMemo(() => rows.filter((r) => r.status === "accepted").length, [rows]);
   const pendingCount = useMemo(() => rows.filter((r) => r.status === "pending").length, [rows]);
   const rejectedCount = useMemo(() => rows.filter((r) => r.status === "rejected").length, [rows]);
+  const completedCount = useMemo(() => rows.filter((r) => r.status === "completed").length, [rows]);
 
   const filtered = useMemo(() => {
     const kw = searchDebounced.toLowerCase();
@@ -98,12 +104,23 @@ export default function ApplicantsManagePage() {
   })();
 
   const doAction = async (app, action) => {
+    // guard: ที่นั่งเต็ม ขณะพยายามอนุมัติใหม่
     if (action === "accept" && !canAcceptMore && app.status !== "accepted") {
       await Swal.fire("ที่นั่งเต็ม", "ไม่สามารถอนุมัติเพิ่มได้เพราะครบจำนวนแล้ว", "warning");
       return;
     }
+    // guard: ทำเสร็จสิ้นได้เฉพาะรายการที่อนุมัติแล้ว
+    if (action === "complete" && app.status !== "accepted") {
+      await Swal.fire("ยังไม่อนุมัติ", "สามารถบันทึกเป็นเสร็จสิ้นได้หลังจากอนุมัติแล้วเท่านั้น", "info");
+      return;
+    }
 
-    const verb = action === "accept" ? "อนุมัติ" : "ปฏิเสธ";
+    const verb =
+      action === "accept" ? "อนุมัติ"
+      : action === "reject" ? "ปฏิเสธ"
+      : action === "complete" ? "บันทึกเสร็จสิ้น"
+      : "ดำเนินการ";
+
     const result = await Swal.fire({
       title: `ยืนยัน${verb}?`,
       text: `${app.full_name} (${app.username})`,
@@ -111,13 +128,16 @@ export default function ApplicantsManagePage() {
       showCancelButton: true,
       confirmButtonText: `ยืนยัน`,
       cancelButtonText: "ยกเลิก",
-      confirmButtonColor: action === "accept" ? "#198754" : "#dc3545",
+      confirmButtonColor:
+        action === "accept" ? "#198754"
+        : action === "reject" ? "#dc3545"
+        : "#0d6efd",
     });
     if (!result.isConfirmed) return;
 
     try {
       setActingId(app.id);
-      await changeApplicationStatus(id, app.id, action);
+      await changeApplicationStatus(id, app.id, action); // ต้องรองรับ action: "complete" ฝั่ง backend
       setLiveMsg(`${verb}เรียบร้อย: ${app.full_name}`);
       await refreshAll(); // refresh ทั้งหัว/ตาราง (อัปเดต remaining/progress)
       await Swal.fire("สำเร็จ", `${verb}ผู้สมัครเรียบร้อย`, "success");
@@ -205,6 +225,9 @@ export default function ApplicantsManagePage() {
               <Chip active={statusFilter === "accepted"} onClick={() => setStatusFilter("accepted")}>
                 อนุมัติแล้ว ({acceptedCount})
               </Chip>
+              <Chip active={statusFilter === "completed"} onClick={() => setStatusFilter("completed")}>
+                เสร็จสิ้น ({completedCount})
+              </Chip>
               <Chip active={statusFilter === "rejected"} onClick={() => setStatusFilter("rejected")}>
                 ปฏิเสธแล้ว ({rejectedCount})
               </Chip>
@@ -263,14 +286,18 @@ export default function ApplicantsManagePage() {
                     <th style={{ width: 160 }}>รหัสนิสิต</th>
                     <th>ชื่อ</th>
                     <th style={{ width: 140 }}>สถานะ</th>
-                    <th className="text-end" style={{ width: 240 }}>จัดการ</th>
+                    <th className="text-end" style={{ width: 360 }}>จัดการ</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((r) => {
                     const disableAccept =
-                      r.status === "accepted" || actingId === r.id || (!canAcceptMore && r.status !== "accepted");
+                      r.status === "accepted" || r.status === "completed" || actingId === r.id || (!canAcceptMore && r.status !== "accepted");
+                    const disableComplete = r.status !== "accepted" || actingId === r.id;
+                    const disableReject = r.status === "rejected" || actingId === r.id;
+
                     const acceptTitle = !canAcceptMore && r.status !== "accepted" ? "ที่นั่งเต็ม" : "อนุมัติ";
+
                     return (
                       <tr
                         key={r.id}
@@ -279,7 +306,9 @@ export default function ApplicantsManagePage() {
                             ? "table-success-subtle"
                             : r.status === "rejected"
                               ? "table-danger-subtle"
-                              : ""
+                              : r.status === "completed"
+                                ? "table-info-subtle"
+                                : ""
                         }
                       >
                         <td className="fw-medium">{r.username}</td>
@@ -303,9 +332,27 @@ export default function ApplicantsManagePage() {
                                 "อนุมัติ"
                               )}
                             </button>
+
+                            <button
+                              className="btn btn-outline-primary btn-sm"
+                              disabled={disableComplete}
+                              onClick={() => doAction(r, "complete")}
+                              title="บันทึกเป็นเสร็จสิ้น"
+                              aria-label={`เสร็จสิ้นงาน ${r.full_name}`}
+                            >
+                              {actingId === r.id ? (
+                                <>
+                                  <span className="spinner-border spinner-border-sm me-2" />
+                                  กำลังบันทึก…
+                                </>
+                              ) : (
+                                "เสร็จสิ้นงาน"
+                              )}
+                            </button>
+
                             <button
                               className="btn btn-outline-danger btn-sm"
-                              disabled={r.status === "rejected" || actingId === r.id}
+                              disabled={disableReject}
                               onClick={() => doAction(r, "reject")}
                               aria-label={`ปฏิเสธ ${r.full_name}`}
                             >
