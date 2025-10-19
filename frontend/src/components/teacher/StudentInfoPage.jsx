@@ -1,49 +1,29 @@
 // src/components/StudentInfoPage.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { getUsers, listMajors } from "../services/api";
+import { getUsers, listMajors } from "../../services/api";
 import {
   getCompetencyProfile,
   getLatestLanguagesAll,
   listTrainings,
   listActivities,
   recalcAcademic,
-} from "../services/competencyApi";
-import Radar5 from "../components/profile/Radar5";
+  // ต้องมีใน services/competencyApi ชี้ไปที่ backend:
+  // GET  /api/competency/courses/required?major=&year=&sem=
+  // GET  /api/competency/courses/grades/:accountId   (ไม่ใส่ year/sem)
+  getRequiredCourses,
+  listCourseGrades,
+} from "../../services/competencyApi";
+import Radar5 from "../profile/Radar5";
+import {
+  scoreLang,
+  scoreTech,
+  calcAllCompetencies,
+  scoreAcademic,
+  toArray,
+} from "../../utils/scoring";
 
-const PURPLE = "#6f42c1";
-
-/* ===== Scoring helpers ===== */
-const scoreLang = (lvl) => ({ A1: 4, A2: 8, B1: 12, B2: 16, C1: 18, C2: 20 }[lvl] ?? 0);
-const CEPT_LEVEL_TO_PCT = { A1: 30, A2: 45, B1: 60, B2: 75, C1: 90, C2: 100 };
-const scoreTech = (trainCount, ictPct, itpePct, ceptObj) => {
-  let ceptPct = 0;
-  if (ceptObj?.score_raw != null) {
-    const raw = Math.max(0, Math.min(50, Number(ceptObj.score_raw)));
-    ceptPct = (raw / 50) * 100;
-  } else if (ceptObj?.level) ceptPct = CEPT_LEVEL_TO_PCT[ceptObj.level] || 0;
-  const ict = Number.isFinite(ictPct) ? Math.max(0, Math.min(100, ictPct)) : 0;
-  const itpe = Number.isFinite(itpePct) ? Math.max(0, Math.min(100, itpePct)) : 0;
-  const bestPct = Math.max(ict, itpe, ceptPct);
-  const examPts = (bestPct / 100) * 19;
-  let passBonus = 0;
-  if (ict >= 50) passBonus += 0.5;
-  if (itpe >= 60) passBonus += 0.5;
-  else if (itpe >= 55) passBonus += 0.25;
-  if (passBonus > 1) passBonus = 1;
-  const trainingBonus = Math.min(0.5, (Number(trainCount) || 0) * 0.1);
-  const total = Math.min(20, examPts + passBonus + trainingBonus);
-  return Math.round(total * 100) / 100;
-};
-const scoreFromHours = (h, cap = 10) => {
-  const x = Number(h || 0);
-  if (!x) return 0;
-  return Math.round(Math.min(1, x / 20) * cap * 100) / 100;
-};
-const toArray = (v) => (Array.isArray(v) ? v : v?.items ?? []);
-
-/* ====== URL helper & default avatar ====== */
 const API_BASE = (import.meta.env?.VITE_API_BASE || "http://localhost:3000").replace(/\/+$/, "");
 const DEFAULT_AVATAR = "/src/assets/csit.jpg";
 const absUrl = (u) => {
@@ -53,7 +33,6 @@ const absUrl = (u) => {
   return `${API_BASE}${path}`;
 };
 
-/* ปุ่มชิป */
 const Chip = ({ active, onClick, children }) => (
   <button
     type="button"
@@ -65,12 +44,47 @@ const Chip = ({ active, onClick, children }) => (
   </button>
 );
 
+/* ================= Helpers: เกรด/โค้ด ================= */
+const normalizeGrade = (g) => {
+  if (g == null) return null;
+  let s = String(g).trim().toUpperCase();
+  if (s === "A+") s = "A";
+  if (s === "P" || s === "PASS") s = "S";
+  if (s === "NP" || s === "N/P") s = "U";
+  return s;
+};
+
+const isPassedLetter = (letterRaw) => {
+  const letter = normalizeGrade(letterRaw);
+  if (!letter) return null;
+  if (letter === "S") return true;
+  if (letter === "U") return false;
+  const L = ["A", "B+", "B", "C+", "C", "D+", "D", "F"];
+  if (!L.includes(letter)) return null;
+  return letter !== "F";
+};
+
+// หาเกรดใน map โดยลองหลายรูปแบบรหัสวิชา
+const pickGradeByCode = (gmap, rawCode) => {
+  if (!gmap || !rawCode) return null;
+  const code = String(rawCode).trim();
+  const variants = new Set([
+    code,
+    code.replace(/[-/].*$/, ""), // 254171-1 -> 254171
+    code.replace(/[-\s]/g, ""),  // 254 171 -> 254171
+  ]);
+  const keys = Object.keys(gmap || {});
+  const hit =
+    keys.find((k) => variants.has(String(k).trim())) ||
+    keys.find((k) => variants.has(String(k).trim().toUpperCase())) ||
+    keys.find((k) => variants.has(String(k).trim().toLowerCase()));
+  return hit ? gmap[hit] : null;
+};
+/* ======================================================= */
+
 export default function StudentInfoPage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     if (!user) { navigate("/login"); return; }
@@ -89,7 +103,7 @@ export default function StudentInfoPage() {
   const toggleDept = (k) => setFilterDept((p) => ({ ...p, [k]: !p[k] }));
   const toggleYear = (k) => setFilterYear((p) => ({ ...p, [k]: !p[k] }));
 
-  // โหลดรายชื่อ + enrich สรุป
+  // โหลดรายชื่อ + enrich
   useEffect(() => {
     const run = async () => {
       if (!user?.role || user.role !== "teacher") return;
@@ -113,10 +127,10 @@ export default function StudentInfoPage() {
         }
         setAccounts(all);
 
-        // enrich: ดึงโปรไฟล์มาเก็บทั้งคะแนน + ช่องทางติดต่อ + avatar_url
+        // enrich profile เบื้องต้น
         const ids = all.map((u) => u.id);
         const CHUNK = 25;
-        const map = {};
+        const baseMap = {};
         for (let i = 0; i < ids.length; i += CHUNK) {
           const chunk = ids.slice(i, i + CHUNK);
           const results = await Promise.allSettled(chunk.map((id) => getCompetencyProfile(id)));
@@ -124,31 +138,104 @@ export default function StudentInfoPage() {
             const id = chunk[idx];
             if (r.status === "fulfilled" && r.value?.account) {
               const acct = r.value.account;
-              map[id] = {
+              baseMap[id] = {
                 manual_gpa: acct.manual_gpa ?? null,
                 year_level: acct.year_level ?? null,
                 computed_gpa: r.value.computed_gpa ?? null,
                 core_completion_pct: r.value.core_completion_pct ?? null,
                 score_academic: r.value.score_academic ?? null,
-                // ช่องทางติดต่อ + avatar
                 email: acct.email ?? "",
                 phone: acct.phone ?? "",
                 line_id: acct.line_id ?? "",
                 facebook: acct.facebook ?? "",
                 github: acct.github ?? "",
                 avatar_url: acct.avatar_url ?? "",
+                total_competency: null,
+                comp_each: null,
               };
             } else {
-              map[id] = {
+              baseMap[id] = {
                 manual_gpa: null, year_level: null, computed_gpa: null,
                 core_completion_pct: null, score_academic: null,
                 email: "", phone: "", line_id: "", facebook: "", github: "",
                 avatar_url: "",
+                total_competency: null,
+                comp_each: null,
               };
             }
           });
         }
-        setEnrich(map);
+        setEnrich(baseMap);
+
+        // คำนวณคะแนนรวม 5 ด้าน (เฉลี่ยทุกปี/เทอม)
+        const CH2 = 8;
+        for (let i = 0; i < ids.length; i += CH2) {
+          const chunk = ids.slice(i, i + CH2);
+          const enriched = await Promise.allSettled(
+            chunk.map(async (id) => {
+              const prof = await getCompetencyProfile(id);
+              const yMax = prof?.account?.year_level || 4;
+              const jobs = [];
+              for (let y = 1; y <= yMax; y++) {
+                for (let s = 1; s <= 2; s++) jobs.push(recalcAcademic(id, { year: y, sem: s }).catch(() => null));
+              }
+              const allTerms = (await Promise.all(jobs)).filter(Boolean);
+
+              let sumGpa25 = 0, sumCore15 = 0, n = 0;
+              for (const r of allTerms) {
+                const g = Number(r?.score_gpa ?? 0);
+                const c = Number(r?.score_core ?? 0);
+                if (Number.isFinite(g) || Number.isFinite(c)) {
+                  sumGpa25 += g;
+                  sumCore15 += c;
+                  n++;
+                }
+              }
+              const avgGpa25 = n ? +(sumGpa25 / n).toFixed(2) : 0;
+              const avgCore15 = n ? +(sumCore15 / n).toFixed(2) : 0;
+
+              const acadObj = scoreAcademic({
+                manualGpa: prof?.account?.manual_gpa,
+                scoreGpa25: avgGpa25,
+                scoreCore15: avgCore15,
+              });
+              const acadScore = acadObj.score;
+
+              const [langs, trainings, social, comm] = await Promise.all([
+                getLatestLanguagesAll(id).catch(() => ({})),
+                listTrainings(id).catch(() => ({ items: [] })),
+                listActivities(id, "social").catch(() => ({ items: [] })),
+                listActivities(id, "communication").catch(() => ({ items: [] })),
+              ]);
+              const cept = langs?.CEPT ?? null;
+              const langScore = scoreLang(cept?.level)?.score ?? 0;
+              const ictPct = Number(langs?.ICT?.score_raw ?? 0);
+              const itpePct = Number(langs?.ITPE?.score_raw ?? 0);
+              const techScore = scoreTech(toArray(trainings).length, ictPct, itpePct, cept)?.score ?? 0;
+
+              const comp = calcAllCompetencies({
+                acadScore,
+                langScore,
+                techScore,
+                socialActs: toArray(social),
+                commActs: toArray(comm),
+              });
+
+              return { id, total_competency: comp.totalEqual, comp_each: comp.each };
+            })
+          );
+
+          setEnrich((prev) => {
+            const nn = { ...prev };
+            enriched.forEach((r) => {
+              if (r.status === "fulfilled" && r.value) {
+                const { id, total_competency, comp_each } = r.value;
+                nn[id] = { ...(nn[id] || {}), total_competency, comp_each };
+              }
+            });
+            return nn;
+          });
+        }
       } catch (e) {
         console.error(e);
         setError(e?.message || "โหลดข้อมูลไม่สำเร็จ");
@@ -199,39 +286,45 @@ export default function StudentInfoPage() {
     activities: { social: [], communication: [] },
     radar: null,
     calc: null,
+    requiredAll: [], // [{year, sem, code, name_th, credit, grade, passed}]
   });
   const modalRef = useRef(null);
 
-  const buildCalc = ({ profile, languages, trainings, activities }) => {
-    const acad = profile?.score_academic ?? 0;
+  const buildCalc = ({ profile, languages, trainings, activities, avgGpa25, avgCore15 }) => {
+    const acadObj = scoreAcademic({
+      manualGpa: profile?.account?.manual_gpa,
+      scoreGpa25: avgGpa25 ?? 0,
+      scoreCore15: avgCore15 ?? 0,
+    });
+    const acadScore = acadObj.score;
     const cept = languages?.CEPT ?? null;
-    const lang = scoreLang(cept?.level);
-    const trainsArr = toArray(trainings);
+    const langScore = scoreLang(cept?.level)?.score ?? 0;
     const ictPct = Number(languages?.ICT?.score_raw ?? 0);
     const itpePct = Number(languages?.ITPE?.score_raw ?? 0);
-    const tech = scoreTech(trainsArr.length, ictPct, itpePct, cept);
-    const socialArr = toArray(activities?.social);
-    const commArr = toArray(activities?.communication);
-    const socialH = socialArr.reduce((s, a) => s + (Number(a.hours) || 0), 0);
-    const commH = commArr.reduce((s, a) => s + (Number(a.hours) || 0), 0);
-    const social = socialH ? scoreFromHours(socialH, 10) : scoreFromHours(socialArr.length, 10);
-    const comm = commH ? scoreFromHours(commH, 10) : scoreFromHours(commArr.length, 10);
-    const raw = { acad, lang, tech, social, comm };
-    const total = Math.round((acad + lang + tech + social + comm) * 100) / 100;
-    const toPct = (v, max) => Math.round((Math.max(0, Math.min(v, max)) / max) * 100);
-    const radar = {
-      labels: ["วิชาการ", "ภาษา", "เทคโนโลยี", "สังคม", "สื่อสาร"],
-      values: [toPct(acad, 40), toPct(lang, 20), toPct(tech, 20), toPct(social, 10), toPct(comm, 10)],
-      raw,
-    };
+    const techScore = scoreTech(toArray(trainings).length, ictPct, itpePct, cept)?.score ?? 0;
+
+    const comp = calcAllCompetencies({
+      acadScore,
+      langScore,
+      techScore,
+      socialActs: toArray(activities?.social),
+      commActs: toArray(activities?.communication),
+    });
+
     const explain = [
-      `วิชาการ ${acad}/40`,
-      `ภาษา ${lang}/20`,
-      `เทคโนโลยี ${tech}/20`,
-      `สังคม ${social}/10`,
-      `สื่อสาร ${comm}/10`,
+      `วิชาการ ${Math.round(comp.each.acad)}/100`,
+      `ภาษา ${Math.round(comp.each.lang)}/100`,
+      `เทคโนโลยี ${Math.round(comp.each.tech)}/100`,
+      `สังคม ${Math.round(comp.each.social)}/100`,
+      `สื่อสาร ${Math.round(comp.each.comm)}/100`,
     ];
-    return { radar, calc: { raw, total, explain } };
+    return {
+      radar: {
+        labels: ["วิชาการ", "ภาษา", "เทคโนโลยี", "สังคม", "สื่อสาร"],
+        values: [comp.each.acad, comp.each.lang, comp.each.tech, comp.each.social, comp.each.comm],
+      },
+      calc: { total: comp.totalEqual, explain, acadObj },
+    };
   };
 
   const openDetail = async (acc) => {
@@ -246,28 +339,67 @@ export default function StudentInfoPage() {
         listActivities(acc.id, "social").catch(() => ({ items: [] })),
         listActivities(acc.id, "communication").catch(() => ({ items: [] })),
       ]);
-      const y = profileRaw?.account?.year_level || 4;
-      const [a1, a2] = await Promise.all([
-        recalcAcademic(acc.id, { year: y, sem: 1 }).catch(() => null),
-        recalcAcademic(acc.id, { year: y, sem: 2 }).catch(() => null),
-      ]);
-      const bestAcad =
-        a1 && a2
-          ? (Number(a2?.score_academic || 0) >= Number(a1?.score_academic || 0) ? a2 : a1)
-          : (a2 || a1 || null);
 
-      const profile = {
-        ...profileRaw,
-        score_academic: bestAcad?.score_academic ?? profileRaw?.score_academic ?? 0,
-        core_completion_pct: bestAcad?.core_completion_pct ?? profileRaw?.core_completion_pct ?? null,
-        gpa_used: bestAcad?.gpa_used ?? profileRaw?.gpa_used ?? null,
-      };
+      // รวมผลวิชาการทุกเทอม
+      const yMax = profileRaw?.account?.year_level || 4;
+      const tasks = [];
+      for (let y = 1; y <= yMax; y++) {
+        for (let s = 1; s <= 2; s++) tasks.push(recalcAcademic(acc.id, { year: y, sem: s }).catch(() => null));
+      }
+      const allTerms = (await Promise.all(tasks)).filter(Boolean);
+      let sumGpa25 = 0, sumCore15 = 0, n = 0;
+      for (const r of allTerms) {
+        sumGpa25 += Number(r?.score_gpa || 0);
+        sumCore15 += Number(r?.score_core || 0);
+        n++;
+      }
+      const avgGpa25 = n ? +(sumGpa25 / n).toFixed(2) : 0;
+      const avgCore15 = n ? +(sumCore15 / n).toFixed(2) : 0;
 
+      /* ===== ดึงเกรด "ทั้งหมด" ทีเดียว (ไม่ส่ง year/sem) ===== */
+      const allGradesResp = await listCourseGrades(acc.id).catch(() => null);
+      let gmapAll = {};
+      if (allGradesResp?.map && typeof allGradesResp.map === "object") {
+        gmapAll = allGradesResp.map; // โครงสร้าง backend นี้
+      } else if (allGradesResp?.grades && typeof allGradesResp.grades === "object") {
+        gmapAll = allGradesResp.grades; // เผื่อ backend อื่น
+      } else if (Array.isArray(allGradesResp?.items)) {
+        for (const it of allGradesResp.items) {
+          const k = it.course_code || it.code;
+          if (k) gmapAll[String(k).trim()] = it.letter || it.grade || it.grade_letter || it.result || null;
+        }
+      }
+
+      // วิชาบังคับทั้งหมด + จับคู่เกรดจาก gmapAll
+      const requiredRows = [];
+      for (let y = 1; y <= yMax; y++) {
+        for (let s = 1; s <= 2; s++) {
+          const req = await getRequiredCourses(profileRaw?.account?.major_id, y, s).catch(() => null);
+          const list = req?.required || req?.items || [];
+          list.forEach((c) => {
+            const gradeRaw = pickGradeByCode(gmapAll, c.code);
+            const grade = normalizeGrade(gradeRaw);
+            requiredRows.push({
+              year: y,
+              sem: s,
+              code: c.code,
+              name_th: c.name_th || c.name_en || "-",
+              credit: c.credit ?? "-",
+              grade,
+              passed: isPassedLetter(grade),
+            });
+          });
+        }
+      }
+
+      const profile = { ...profileRaw };
       const { radar, calc } = buildCalc({
         profile,
         languages,
         trainings,
         activities: { social, communication: comm },
+        avgGpa25,
+        avgCore15,
       });
 
       setDetail({
@@ -277,6 +409,7 @@ export default function StudentInfoPage() {
         activities: { social, communication: comm },
         radar,
         calc,
+        requiredAll: requiredRows,
       });
     } catch (e) {
       console.error(e);
@@ -291,7 +424,7 @@ export default function StudentInfoPage() {
 
   return (
     <div className="min-vh-100 position-relative bg-animated">
-      {/* Blobs background */}
+      {/* Blobs */}
       <div className="bg-blob bg-blob-1" aria-hidden="true" />
       <div className="bg-blob bg-blob-2" aria-hidden="true" />
       <div className="bg-blob bg-blob-3" aria-hidden="true" />
@@ -299,17 +432,17 @@ export default function StudentInfoPage() {
       {/* Top Bar */}
       <div className="hero-bar topbar glassy" style={{ height: 72 }}>
         <div className="container-xxl d-flex align-items-center h-100">
-        <div className="d-flex align-items-center">
+          <div className="d-flex align-items-center">
             <img src="/src/assets/csit.jpg" alt="Logo" className="rounded-3 shadow-sm" style={{ height: 40, width: 40, objectFit: "cover" }} />
             <div className="ms-3 text-white fw-semibold">CSIT Competency System</div>
           </div>
-        <div className="ms-auto d-flex align-items-center">
-          <span className="text-white-50 me-3">{user?.full_name || user?.username}</span>
-          <button className="btn btn-light btn-sm rounded-pill ripple" onClick={() => { logout?.(); navigate("/login"); }}>
-            ออกจากระบบ
-          </button>
+          <div className="ms-auto d-flex align-items-center">
+            <span className="text-white-50 me-3">{user?.full_name || user?.username}</span>
+            <button className="btn btn-light btn-sm rounded-pill ripple" onClick={() => { logout?.(); navigate("/login"); }}>
+              ออกจากระบบ
+            </button>
+          </div>
         </div>
-      </div>
       </div>
 
       <div className="container-xxl py-4 position-relative" style={{ zIndex: 1 }}>
@@ -342,12 +475,6 @@ export default function StudentInfoPage() {
             <div className="card border-0 shadow-sm rounded-4 mb-3 glassy">
               <div className="card-body d-flex flex-wrap gap-2 align-items-center">
                 <h4 className="mb-0 me-auto">ข้อมูลสมรรถนะนิสิต</h4>
-                <button className="btn btn-outline-primary rounded-pill ripple" onClick={() => navigate("/create-announcement")}> 
-                  <i className="bi bi-megaphone-fill me-1" /> เพิ่มประกาศ
-                </button>
-                <button className="btn btn-outline-secondary rounded-pill ripple" onClick={() => navigate("/teacher-announcements")}>
-                  <i className="bi bi-gear-fill me-1" /> จัดการประกาศ
-                </button>
                 <div className="position-relative ms-auto flex-grow-1 flex-md-grow-0" style={{ minWidth: 260 }}>
                   <i className="bi bi-search position-absolute" style={{ left: 12, top: 10, opacity: 0.5 }} />
                   <input
@@ -361,7 +488,7 @@ export default function StudentInfoPage() {
               </div>
             </div>
 
-            {/* Results */}
+            {/* Results header */}
             {loading ? (
               <div className="row g-4">
                 {Array.from({ length: 6 }).map((_, i) => (
@@ -395,6 +522,7 @@ export default function StudentInfoPage() {
                 const manualGpa = enrich[acc.id]?.manual_gpa ?? "—";
                 const yearLevel = enrich[acc.id]?.year_level ?? "—";
                 const computedGpa = enrich[acc.id]?.computed_gpa ?? "—";
+                const totalComp = enrich[acc.id]?.total_competency;
                 const avatar = absUrl(enrich[acc.id]?.avatar_url);
 
                 return (
@@ -415,9 +543,14 @@ export default function StudentInfoPage() {
                             className="rounded-circle"
                             style={{ width: 40, height: 40, objectFit: "cover" }}
                           />
-                          <div>
+                          <div className="flex-grow-1">
                             <div className="fw-semibold text-truncate" title={acc.full_name}>{acc.full_name}</div>
                             <div className="text-muted small">{acc.username}</div>
+                          </div>
+                          <div className="ms-auto">
+                            <span className="badge text-bg-primary rounded-pill">
+                              {Number.isFinite(totalComp) ? `${totalComp}/100` : "กำลังคำนวณ…"}
+                            </span>
                           </div>
                         </div>
 
@@ -515,11 +648,9 @@ export default function StudentInfoPage() {
                       <div className="col-6 col-lg-3">
                         <div className="card border-0 shadow-sm rounded-4 h-100">
                           <div className="card-body">
-                            <div className="text-muted small">วิชาบังคับสำเร็จ</div>
+                            <div className="text-muted small">คะแนนรวม (ถ่วงเท่ากัน)</div>
                             <div className="fs-5 fw-semibold">
-                              {detail?.profile?.core_completion_pct != null
-                                ? `${Number(detail.profile.core_completion_pct).toFixed(0)}%`
-                                : "—"}
+                              {detail?.calc?.total != null ? `${detail.calc.total}/100` : "—"}
                             </div>
                           </div>
                         </div>
@@ -585,36 +716,49 @@ export default function StudentInfoPage() {
                         </div>
                       </div>
 
+                      {/* วิชาบังคับทั้งหมด */}
                       <div className="col-12">
-                        <div className="card border-0 shadow-sm rounded-4">
+                        <div className="card border-0 shadow-sm rounded-4 h-100">
                           <div className="card-body">
-                            <div className="fw-semibold mb-2">กิจกรรม</div>
-                            <div className="row">
-                              <div className="col-12 col-md-6">
-                                <div className="text-muted small mb-1">สังคม (Social)</div>
-                                {toArray(detail.activities.social).length ? (
-                                  <ul className="list-group list-group-flush">
-                                    {toArray(detail.activities.social).map((a) => (
-                                      <li key={a.id} className="list-group-item px-0">
-                                        {a.title} {a.hours ? `— ${a.hours} ชม.` : ""} {a.role ? `(${a.role})` : ""}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : <div className="text-muted small">ยังไม่มีกิจกรรมสังคม</div>}
+                            <div className="fw-semibold mb-2">วิชาบังคับทั้งหมด (ทุกปี/ทุกเทอม)</div>
+                            {detail.requiredAll?.length ? (
+                              <div className="table-responsive">
+                                <table className="table table-sm align-middle">
+                                  <thead>
+                                    <tr>
+                                      <th style={{width: 80}}>ปี</th>
+                                      <th style={{width: 80}}>เทอม</th>
+                                      <th style={{width: 120}}>รหัส</th>
+                                      <th>ชื่อรายวิชา</th>
+                                      <th style={{width: 80}}>หน่วยกิต</th>
+                                      <th style={{width: 80}}>เกรด</th>
+                                      <th style={{width: 120}}>สถานะ</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {detail.requiredAll
+                                      .sort((a, b) => (a.year - b.year) || (a.sem - b.sem) || String(a.code).localeCompare(String(b.code)))
+                                      .map((row) => (
+                                        <tr key={`${row.year}-${row.sem}-${row.code}`}>
+                                          <td>{row.year}</td>
+                                          <td>{row.sem}</td>
+                                          <td className="text-monospace">{row.code}</td>
+                                          <td>{row.name_th}</td>
+                                          <td>{row.credit}</td>
+                                          <td>{normalizeGrade(row.grade) ?? "—"}</td>
+                                          <td>
+                                            {row.passed === null ? <span className="badge text-bg-secondary">รอผล</span>
+                                              : row.passed ? <span className="badge text-bg-success">ผ่าน</span>
+                                              : <span className="badge text-bg-danger">ไม่ผ่าน</span>}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                  </tbody>
+                                </table>
                               </div>
-                              <div className="col-12 col-md-6">
-                                <div className="text-muted small mb-1">การสื่อสาร (Communication)</div>
-                                {toArray(detail.activities.communication).length ? (
-                                  <ul className="list-group list-group-flush">
-                                    {toArray(detail.activities.communication).map((a) => (
-                                      <li key={a.id} className="list-group-item px-0">
-                                        {a.title} {a.hours ? `— ${a.hours} ชม.` : ""} {a.role ? `(${a.role})` : ""}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : <div className="text-muted small">ยังไม่มีกิจกรรมการสื่อสาร</div>}
-                              </div>
-                            </div>
+                            ) : (
+                              <div className="text-muted small">ยังไม่มีข้อมูลวิชาบังคับ</div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -632,65 +776,32 @@ export default function StudentInfoPage() {
         </div>
       )}
 
-    
-
       {/* style */}
       <style>{`
-        /* Animated background & blobs */
         .bg-animated{background:radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),radial-gradient(1000px 500px at 110% 10%, #e6f0ff 10%, transparent 55%),linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%);} 
         .glassy{backdrop-filter:blur(8px);} 
         .topbar{position:sticky;top:0;left:0;width:100%;background:linear-gradient(90deg, rgba(111,66,193,.9), rgba(142,92,255,.9));box-shadow:0 4px 16px rgba(111,66,193,.22);z-index:1040;border-bottom:1px solid rgba(255,255,255,.12);} 
-
-        /* Floating motion */
-        .card-float{animation:floatY 6s ease-in-out infinite;} 
-        @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
-
         .glass-card { backdrop-filter: blur(6px); transition: transform .15s ease, box-shadow .15s ease; }
         .glass-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(28,39,49,.12)!important; }
         .ratio-21x9 { aspect-ratio: 21/9; width: 100%; background: #e9ecef; }
         .year-pill { font-weight: 700; }
         .form-control:focus { box-shadow: 0 0 0 .2rem rgba(111,66,193,.12); border-color: #8e5cff; }
-        .wave{position:fixed;left:0;right:0;bottom:-1px;width:100%;height:120px;}
-
-        /* Ripple */
-        .ripple{position:relative;overflow:hidden;} 
-        .ripple:after{content:"";position:absolute;inset:0;border-radius:inherit;opacity:0;background:radial-gradient(circle at var(--x,50%) var(--y,50%), rgba(255,255,255,.45), transparent 40%);transform:scale(.2);transition:transform .3s, opacity .45s;pointer-events:none;} 
-        .ripple:active:after{opacity:1;transform:scale(1);transition:0s;} 
-        .ripple{--x:50%;--y:50%;} 
-        .ripple:focus-visible{outline:3px solid rgba(142,92,255,.45);outline-offset:2px;}
-
-        /* Blobs */
-        html, body {
-  overflow-x: hidden;
-}
-
-/* ป้องกัน blob ล้นจอ */
-.bg-blob {
-  position: absolute;
-  filter: blur(60px);
-  opacity: .55;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-  max-width: 100vw;
-  will-change: transform;
-}
-
-/* ให้ container หลักไม่ล้น */
-.bg-animated {
-  overflow-x: hidden;
-  width: 100%;
-  max-width: 100vw;
-}
+        html, body { overflow-x: hidden; }
+        .bg-blob { position: absolute; filter: blur(60px); opacity: .55; z-index: 0; pointer-events: none; overflow: hidden; max-width: 100vw; will-change: transform; }
         .bg-blob-1{width:420px;height:420px;left:-120px;top:-80px;background:#d7c6ff;animation:drift1 18s ease-in-out infinite;} 
         .bg-blob-2{width:360px;height:360px;right:-120px;top:120px;background:#c6ddff;animation:drift2 22s ease-in-out infinite;} 
         .bg-blob-3{width:300px;height:300px;left:15%;bottom:-120px;background:#ffd9ec;animation:drift3 20s ease-in-out infinite;} 
         @keyframes drift1{0%,100%{transform:translate(0,0)}50%{transform:translate(20px,10px)}} 
         @keyframes drift2{0%,100%{transform:translate(0,0)}50%{transform:translate(-16px,8px)}} 
         @keyframes drift3{0%,100%{transform:translate(0,0)}50%{transform:translate(12px,-12px)}} 
+        .ripple{position:relative;overflow:hidden;} 
+        .ripple:after{content:"";position:absolute;inset:0;border-radius:inherit;opacity:0;background:radial-gradient(circle at var(--x,50%) var(--y,50%), rgba(255,255,255,.45), transparent 40%);transform:scale(.2);transition:transform .3s, opacity .45s;pointer-events:none;} 
+        .ripple:active:after{opacity:1;transform:scale(1);transition:0s;} 
+        .ripple{--x:50%;--y:50%;} 
+        .ripple:focus-visible{outline:3px solid rgba(142,92,255,.45);outline-offset:2px;}
       `}</style>
 
-      {/* ripple positioning script */}
+      {/* ripple position helper */}
       <script dangerouslySetInnerHTML={{ __html: `
         document.addEventListener('pointerdown', (e) => {
           const el = e.target.closest('.ripple');

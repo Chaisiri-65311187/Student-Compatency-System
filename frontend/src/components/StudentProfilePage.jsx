@@ -13,59 +13,22 @@ import {
 import { getAccountById, updateAccount, uploadAvatar } from "../services/api";
 import Radar5 from "../components/profile/Radar5";
 
-/* ===== Helper: ประกอบ URL รูปจาก backend ===== */
+// ✅ เรียกใช้สูตรคำนวณจาก scoring (รวมศูนย์ทั้งหมด)
+import {
+  scoreAcademic,         // รวม GPA + Core → /40 (ดีฟอลต์ 40:60)
+  scoreLang,             // CEPT level → /20
+  scoreTech,             // Tech → /20
+  calcAllCompetencies,   // รวมเป็น 0–100 ต่อแกน + totalEqual
+} from "../utils/scoring";
+
+/* ===== Helper: URL รูปจาก backend ===== */
 const API_BASE = (import.meta.env?.VITE_API_BASE || "http://localhost:3000").replace(/\/+$/, "");
 function resolveAvatarUrl(u) {
   if (!u) return "/src/assets/csit.jpg";
-  if (/^(data:|https?:\/\/)/i.test(u)) return u; // absolute / data URL
-  if (u.startsWith("/uploads")) return `${API_BASE}${u}`; // backend static
-  return u; // อื่น ๆ (เช่นไฟล์ใน public)
+  if (/^(data:|https?:\/\/)/i.test(u)) return u;
+  if (u.startsWith("/uploads")) return `${API_BASE}${u}`;
+  return u;
 }
-
-/* ===== FE scoring (ชั่วคราว) ===== */
-const scoreLang = (lvl) => ({ A1: 4, A2: 8, B1: 12, B2: 16, C1: 18, C2: 20 }[lvl] ?? 0);
-const CEPT_LEVEL_TO_PCT = { A1: 30, A2: 45, B1: 60, B2: 75, C1: 90, C2: 100 };
-
-/**
- * เทคโนโลยี (เต็ม 20)
- * - ส่วนหลักจาก % ที่ดีที่สุดของ CEPT/ICT/ITPE → 0..19
- * - โบนัสผ่านรวมสูงสุด +1 (ICT ≥50% +0.5; ITPE ≥60% +0.5 หรือ 55–59% +0.25)
- * - อบรม น้ำหนักเบา: +0.1/ครั้ง (สูงสุด +0.5)
- */
-const scoreTech = (trainCount, ictPct, itpePct, ceptObj) => {
-  let ceptPct = 0;
-  if (ceptObj?.score_raw != null) {
-    const raw = Math.max(0, Math.min(50, Number(ceptObj.score_raw)));
-    ceptPct = (raw / 50) * 100;
-  } else if (ceptObj?.level) {
-    ceptPct = CEPT_LEVEL_TO_PCT[ceptObj.level] || 0;
-  }
-  const bestPct = Math.max(
-    Number.isFinite(ictPct) ? Math.max(0, Math.min(100, ictPct)) : 0,
-    Number.isFinite(itpePct) ? Math.max(0, Math.min(100, itpePct)) : 0,
-    ceptPct
-  );
-  const examPts = (bestPct / 100) * 19;
-
-  let passBonus = 0;
-  if (Number.isFinite(ictPct) && ictPct >= 50) passBonus += 0.5;
-  if (Number.isFinite(itpePct)) {
-    if (itpePct >= 60) passBonus += 0.5;
-    else if (itpePct >= 55) passBonus += 0.25;
-  }
-  if (passBonus > 1) passBonus = 1;
-
-  const trainingBonus = Math.min(0.5, (Number(trainCount) || 0) * 0.1);
-
-  const total = Math.min(20, examPts + passBonus + trainingBonus);
-  return Math.round(total * 100) / 100;
-};
-
-const scoreFromHours = (h, cap = 10) => {
-  const x = Number(h || 0);
-  if (!x) return 0;
-  return Math.round(Math.min(1, x / 20) * cap * 100) / 100;
-};
 
 export default function StudentProfilePage() {
   const { user } = useAuth();
@@ -73,7 +36,7 @@ export default function StudentProfilePage() {
 
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState(null);
-  const [academic, setAcademic] = useState(null);
+  const [academic, setAcademic] = useState(null); // จะเก็บ "ค่าเฉลี่ยทุกปีทุกเทอม"
   const [langLatest, setLangLatest] = useState(null);
   const [langAll, setLangAll] = useState({ CEPT: null, ICT: null, ITPE: null });
   const [trains, setTrains] = useState([]);
@@ -109,19 +72,42 @@ export default function StudentProfilePage() {
         const prof = await getCompetencyProfile(user.id);
         setProfile(prof);
 
-        const y = prof?.account?.year_level || 4;
-        const [a1, a2] = await Promise.all([
-          recalcAcademic(user.id, { year: y, sem: 1 }),
-          recalcAcademic(user.id, { year: y, sem: 2 }),
-        ]);
-        setAcademic(a2 && (a2.score_academic ?? 0) > (a1?.score_academic ?? 0) ? a2 : a1);
+        // ✅ รวมทุกปีทุกเทอม → เฉลี่ยคะแนนวิชาการ
+        const yMax = prof?.account?.year_level || 4;
+        const jobs = [];
+        for (let y = 1; y <= yMax; y++) {
+          for (let s = 1; s <= 2; s++) jobs.push(recalcAcademic(user.id, { year: y, sem: s }).catch(() => null));
+        }
+        const all = await Promise.all(jobs);
+        const ok = all.filter(Boolean);
 
-        const [lang, all] = await Promise.all([
+        let avgScore = 0, avgGpa = 0, avgCore = 0, n = 0;
+        ok.forEach(r => {
+          if (typeof r?.score_academic === "number") {
+            avgScore += r.score_academic;
+            avgGpa += (r.score_gpa ?? 0);
+            avgCore += (r.score_core ?? 0);
+            n += 1;
+          }
+        });
+        const agg = n
+          ? {
+            score_academic: Number((avgScore / n).toFixed(2)),
+            score_gpa: Number((avgGpa / n).toFixed(2)), // /25
+            score_core: Number((avgCore / n).toFixed(2)), // /15
+            // meta จากรายการสุดท้าย (ล่าสุด)
+            gpa_used: ok.at(-1)?.gpa_used ?? null,
+            core_completion_pct: ok.at(-1)?.core_completion_pct ?? null,
+          }
+          : null;
+        setAcademic(agg);
+
+        const [lang, allLang] = await Promise.all([
           getLatestLanguage(user.id),
           getLatestLanguagesAll(user.id),
         ]);
         setLangLatest(lang?.latest || null);
-        setLangAll(all || { CEPT: null, ICT: null, ITPE: null });
+        setLangAll(allLang || { CEPT: null, ICT: null, ITPE: null });
 
         const [t, s, m] = await Promise.all([
           listTrainings(user.id),
@@ -140,43 +126,54 @@ export default function StudentProfilePage() {
   // เคลียร์ blob URL เวลาเปลี่ยนไฟล์/ปิดโมดัล
   useEffect(() => () => {
     if (preview && preview.startsWith("blob:")) {
-      try { URL.revokeObjectURL(preview); } catch {}
+      try { URL.revokeObjectURL(preview); } catch { }
     }
   }, [preview]);
 
-  // ===== ค่าคะแนน "ดิบ" (สำหรับ chip ใต้กราฟ) =====
-  const raw = useMemo(() => {
-    const acad = academic?.score_academic ?? 0; // /40
-    const lang = scoreLang(langLatest?.level); // /20
-    const ictPct = Number(langAll?.ICT?.score_raw ?? 0); // %
-    const itpePct = Number(langAll?.ITPE?.score_raw ?? 0); // %
-    const ceptObj = langAll?.CEPT ?? null; // raw 0..50 หรือ level
-    const tech = scoreTech(trains.length, ictPct, itpePct, ceptObj); // /20
+  // ===== รวมคะแนน 5 มิติแบบ 0–100 ต่อแกน + รวมถ่วงเท่ากัน =====
+  const comp = useMemo(() => {
+    // --- Academic: รวมโดยสูตรกลางใน scoring.js (ดีฟอลต์ 40:60) ---
+    const acadObj = scoreAcademic({
+      manualGpa: Number(acct?.manual_gpa),
+      scoreGpa25: Number(academic?.score_gpa ?? 0),   // /25
+      scoreCore15: Number(academic?.score_core ?? 0),  // /15
+      // weights: { wManual: 0.4, wRequired: 0.6 },     // (ไม่ส่งก็ใช้ค่าเริ่มต้น 40:60)
+    });
+    const acadScore = acadObj.score; // /40
 
-    const socH = socialActs.reduce((s, a) => s + (Number(a.hours) || 0), 0);
-    const comH = commActs.reduce((s, a) => s + (Number(a.hours) || 0), 0);
-    const social = socH ? scoreFromHours(socH, 10) : scoreFromHours(socialActs.length, 10); // /10
-    const comm = comH ? scoreFromHours(comH, 10) : scoreFromHours(commActs.length, 10); // /10
+    // --- Language & Technology ---
+    const langScore = scoreLang(langLatest?.level)?.score ?? 0; // /20
+    const ictPct = Number(langAll?.ICT?.score_raw ?? 0);
+    const itpePct = Number(langAll?.ITPE?.score_raw ?? 0);
+    const ceptObj = langAll?.CEPT ?? null;
+    const techScore = scoreTech(trains.length, ictPct, itpePct, ceptObj)?.score ?? 0; // /20
 
-    return { acad, lang, tech, social, comm };
-  }, [academic, langLatest, langAll, trains.length, socialActs, commActs]);
+    return calcAllCompetencies({
+      acadScore,   // /40
+      langScore,   // /20
+      techScore,   // /20
+      socialActs,
+      commActs,
+      // targetPointsSocial: 40,
+      // targetPointsComm: 40,
+    });
+  }, [academic, langLatest, langAll, trains.length, socialActs, commActs, acct?.manual_gpa]);
 
-  // ===== ค่า % สำหรับเรดาร์ =====
-  const radarDisp = useMemo(() => {
-    const asPct = (val, max) => Math.round((Math.max(0, Math.min(val, max)) / max) * 100);
-    const valuesPct = [asPct(raw.acad, 40), asPct(raw.lang, 20), asPct(raw.tech, 20), asPct(raw.social, 10), asPct(raw.comm, 10)];
-    return { labels: ["วิชาการ", "ภาษา", "เทคโนโลยี", "สังคม", "สื่อสาร"], values: valuesPct, max: [100, 100, 100, 100, 100] };
-  }, [raw]);
-
-  // ===== เปิด Modal แก้ไขโปรไฟล์ =====
+  /* ===== ฟังก์ชันแก้ไขโปรไฟล์ (ปุ่ม/โมดัล) ===== */
   const openEdit = async () => {
-    setEditErr(""); setFile(null); setPreview("");
+    setEditErr(""); setFile(null);
+    if (preview && preview.startsWith("blob:")) { try { URL.revokeObjectURL(preview); } catch { } setPreview(""); }
     try {
       const acc = await getAccountById(user.id);
       const first_name = acc?.first_name || "";
       const last_name = acc?.last_name || "";
       const full_name = acc?.full_name || `${first_name} ${last_name}`.trim();
-      const form = { first_name, last_name, full_name, email: acc?.email || "", phone: acc?.phone || "", line_id: acc?.line_id || "", facebook: acc?.facebook || "", github: acc?.github || "", avatar_url: acc?.avatar_url || "" };
+      const form = {
+        first_name, last_name, full_name,
+        email: acc?.email || "", phone: acc?.phone || "",
+        line_id: acc?.line_id || "", facebook: acc?.facebook || "",
+        github: acc?.github || "", avatar_url: acc?.avatar_url || "",
+      };
       setEditForm(form);
       setPreview(resolveAvatarUrl(form.avatar_url || ""));
       setEditOpen(true);
@@ -190,8 +187,9 @@ export default function StudentProfilePage() {
     const f = e.target.files?.[0];
     if (!f) return;
     setFile(f);
-    const url = URL.createObjectURL(f);
-    setPreview(url);
+    if (preview && preview.startsWith("blob:")) { try { URL.revokeObjectURL(preview); } catch { } }
+    setPreview(URL.createObjectURL(f));
+    setEditOpen(true);
   };
 
   const onSaveEdit = async (e) => {
@@ -200,13 +198,13 @@ export default function StudentProfilePage() {
     try {
       let avatarUrl = editForm.avatar_url || "";
       if (file) {
-        const up = await uploadAvatar(user.id, file); // backend ควรคืน {url:"/uploads/xxx.jpg"}
+        const up = await uploadAvatar(user.id, file); // backend -> { url: "/uploads/xxx.jpg" }
         if (up?.url) avatarUrl = up.url;
       }
       const payload = {
         first_name: editForm.first_name,
         last_name: editForm.last_name,
-        full_name: editForm.full_name?.trim() || `${editForm.first_name} ${editForm.last_name}`.trim(),
+        full_name: (editForm.full_name ?? "").trim() || `${editForm.first_name} ${editForm.last_name}`.trim(),
         email: editForm.email,
         phone: editForm.phone,
         line_id: editForm.line_id,
@@ -215,10 +213,18 @@ export default function StudentProfilePage() {
         avatar_url: avatarUrl,
       };
       await updateAccount(user.id, payload);
-
-      // อัปเดตหน้าให้เห็นผลทันที
-      setProfile((p) => ({ ...p, account: { ...(p?.account || {}), ...payload, username: p?.account?.username, year_level: p?.account?.year_level, manual_gpa: p?.account?.manual_gpa, major_id: p?.account?.major_id } }));
-
+      // อัปเดตหน้าทันที
+      setProfile((p) => ({
+        ...p,
+        account: {
+          ...(p?.account || {}),
+          ...payload,
+          username: p?.account?.username,
+          year_level: p?.account?.year_level,
+          manual_gpa: p?.account?.manual_gpa,
+          major_id: p?.account?.major_id,
+        },
+      }));
       setPreview(resolveAvatarUrl(avatarUrl));
       alert("บันทึกโปรไฟล์สำเร็จ");
       setEditOpen(false);
@@ -249,7 +255,7 @@ export default function StudentProfilePage() {
       </div>
 
       <div className="container-xxl py-4 position-relative" style={{ zIndex: 1 }}>
-        {/* Toolbar ใต้หัวเรื่อง */}
+        {/* Toolbar */}
         <div className="card border-0 shadow-sm rounded-4 mb-3 card-float glassy">
           <div className="card-body d-flex flex-wrap gap-2 align-items-center">
             <button className="btn btn-outline-secondary rounded-pill ripple" onClick={() => navigate(-1)}>← ย้อนกลับ</button>
@@ -280,7 +286,7 @@ export default function StudentProfilePage() {
                       <button type="button" className="btn btn-sm btn-light rounded-circle position-absolute bottom-0 end-0 ripple" title="เปลี่ยนรูป" onClick={() => document.getElementById('avatarInput')?.click()}>
                         <i className="bi bi-camera" />
                       </button>
-                      <input id="avatarInput" type="file" accept="image/*" hidden onChange={(e) => { const f=e.target.files?.[0]; if(!f) return; setFile(f); setPreview(URL.createObjectURL(f)); setEditOpen(true); }} />
+                      <input id="avatarInput" type="file" accept="image/*" hidden onChange={onPickFile} />
                     </div>
                     <div>
                       <div className="h5 mb-1">{acct?.full_name || "-"}</div>
@@ -322,16 +328,7 @@ export default function StudentProfilePage() {
                   <div className="mt-2 small text-muted">กิจกรรม: สังคม {socialActs.length} รายการ · สื่อสาร {commActs.length} รายการ</div>
                 </div>
               </div>
-
-              {academic && (
-                <div className="card shadow-sm border-0 rounded-4 mt-3 glassy">
-                  <div className="card-body">
-                    <div className="fw-semibold mb-1">สรุปด้านวิชาการ (เทอมที่คะแนนดีกว่า)</div>
-                    <div className="small text-muted">GPA ใช้คำนวณ: <b>{academic.gpa_used ?? "-"}</b> · ผ่านวิชาบังคับ: <b>{academic.core_completion_pct}%</b></div>
-                    <div className="mt-1">คะแนน GPA <b>{academic.score_gpa}/25</b> + วิชาบังคับ <b>{academic.score_core}/15</b> = <b>{academic.score_academic}/40</b></div>
-                  </div>
-                </div>
-              )}
+          
             </div>
 
             {/* ขวา: Radar */}
@@ -339,18 +336,27 @@ export default function StudentProfilePage() {
               <div className="card shadow-sm border-0 rounded-4 h-100 glassy">
                 <div className="card-body">
                   <div className="d-flex justify-content-between align-items-center mb-2">
-                    <h5 className="mb-0">เรดาร์สมรรถนะ 5 ด้าน (ปรับเป็น % ต่อแกน)</h5>
-                    <div className="text-muted small">0–100% ต่อแกน เพื่อความสมดุลในการมองเห็น</div>
+                    <h5 className="mb-0">เรดาร์สมรรถนะ 5 ด้าน </h5>
+                    <div className="badge text-bg-primary rounded-pill">
+                      คะแนนรวม : {comp?.totalEqual ?? 0}/100
+                    </div>
                   </div>
 
-                  <Radar5 labels={radarDisp.labels} values={radarDisp.values} maxValues={radarDisp.max} />
+                  <Radar5
+                    labels={["วิชาการ", "ภาษา", "เทคโนโลยี", "สังคม", "สื่อสาร"]}
+                    values={[comp?.each?.acad ?? 0, comp?.each?.lang ?? 0, comp?.each?.tech ?? 0, comp?.each?.social ?? 0, comp?.each?.comm ?? 0]}
+                    maxValues={[100, 100, 100, 100, 100]}
+                    baseColor="#6f42c1"
+                    theme="light"
+                    height={440}
+                  />
 
                   <div className="d-flex flex-wrap gap-2 mt-3">
-                    <span className="badge rounded-pill bg-light text-dark">วิชาการ {raw.acad}/40</span>
-                    <span className="badge rounded-pill bg-light text-dark">ภาษา {raw.lang}/20</span>
-                    <span className="badge rounded-pill bg-light text-dark">เทคโนโลยี {raw.tech}/20</span>
-                    <span className="badge rounded-pill bg-light text-dark">สังคม {raw.social}/10</span>
-                    <span className="badge rounded-pill bg-light text-dark">สื่อสาร {raw.comm}/10</span>
+                    <span className="badge rounded-pill bg-light text-dark">วิชาการ {comp?.each?.acad ?? 0}/100</span>
+                    <span className="badge rounded-pill bg-light text-dark">ภาษา {comp?.each?.lang ?? 0}/100</span>
+                    <span className="badge rounded-pill bg-light text-dark">เทคโนโลยี {comp?.each?.tech ?? 0}/100</span>
+                    <span className="badge rounded-pill bg-light text-dark">สังคม {comp?.each?.social ?? 0}/100</span>
+                    <span className="badge rounded-pill bg-light text-dark">สื่อสาร {comp?.each?.comm ?? 0}/100</span>
                   </div>
                 </div>
               </div>
@@ -358,7 +364,6 @@ export default function StudentProfilePage() {
           </div>
         )}
       </div>
-
       {/* ===== Modal: แก้ไขโปรไฟล์ ===== */}
       {editOpen && (
         <div className="modal d-block" tabIndex="-1" style={{ backgroundColor: "rgba(0,0,0,0.5)" }}>
@@ -366,60 +371,111 @@ export default function StudentProfilePage() {
             <div className="modal-content rounded-4">
               <div className="modal-header border-0">
                 <h5 className="modal-title">แก้ไขโปรไฟล์</h5>
-                <button type="button" className="btn-close" onClick={() => setEditOpen(false)}></button>
+                <button type="button" className="btn-close" onClick={() => setEditOpen(false)} />
               </div>
+
               <form onSubmit={onSaveEdit}>
                 <div className="modal-body">
                   {editErr && <div className="alert alert-danger">{editErr}</div>}
+
                   <div className="row g-3">
                     <div className="col-12 col-md-4">
                       <div className="rounded-4 border" style={{ width: "100%", aspectRatio: "1/1", overflow: "hidden", background: "#f8f9fa" }}>
                         {preview ? (
-                          <img src={preview} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => (e.currentTarget.src = "/src/assets/csit.jpg")} />
+                          <img
+                            src={preview}
+                            alt="avatar"
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                            onError={(e) => (e.currentTarget.src = "/src/assets/csit.jpg")}
+                          />
                         ) : (
                           <div className="w-100 h-100 d-flex align-items-center justify-content-center text-muted small">ไม่มีรูป</div>
                         )}
                       </div>
+
                       <label className="btn btn-outline-primary w-100 mt-2 rounded-pill ripple">
                         อัปโหลดรูป…
                         <input type="file" accept="image/*" hidden onChange={onPickFile} />
                       </label>
                     </div>
+
                     <div className="col-12 col-md-8">
                       <div className="row g-2">
                         <div className="col-12">
                           <div className="form-floating">
-                            <input className="form-control rounded-3" id="full" placeholder="ชื่อ–นามสกุล (แสดงผล)" value={editForm.full_name} onChange={(e) => setEditForm((p) => ({ ...p, full_name: e.target.value }))} />
+                            <input
+                              className="form-control rounded-3"
+                              id="full"
+                              placeholder="ชื่อ–นามสกุล (แสดงผล)"
+                              value={editForm.full_name}
+                              onChange={(e) => setEditForm((p) => ({ ...p, full_name: e.target.value }))}
+                            />
                             <label htmlFor="full">ชื่อ–นามสกุล (แสดงผล)</label>
                           </div>
                         </div>
+
                         <div className="col-md-6">
                           <div className="form-floating">
-                            <input type="email" className="form-control rounded-3" id="email" placeholder="อีเมล" value={editForm.email} onChange={(e) => setEditForm((p) => ({ ...p, email: e.target.value }))} />
+                            <input
+                              type="email"
+                              className="form-control rounded-3"
+                              id="email"
+                              placeholder="อีเมล"
+                              value={editForm.email}
+                              onChange={(e) => setEditForm((p) => ({ ...p, email: e.target.value }))}
+                            />
                             <label htmlFor="email">อีเมล</label>
                           </div>
                         </div>
+
                         <div className="col-md-6">
                           <div className="form-floating">
-                            <input className="form-control rounded-3" id="phone" placeholder="เบอร์โทร" value={editForm.phone} onChange={(e) => setEditForm((p) => ({ ...p, phone: e.target.value }))} />
+                            <input
+                              className="form-control rounded-3"
+                              id="phone"
+                              placeholder="เบอร์โทร"
+                              value={editForm.phone}
+                              onChange={(e) => setEditForm((p) => ({ ...p, phone: e.target.value }))}
+                            />
                             <label htmlFor="phone">เบอร์โทร</label>
                           </div>
                         </div>
+
                         <div className="col-md-4">
                           <div className="form-floating">
-                            <input className="form-control rounded-3" id="line" placeholder="Line ID" value={editForm.line_id} onChange={(e) => setEditForm((p) => ({ ...p, line_id: e.target.value }))} />
+                            <input
+                              className="form-control rounded-3"
+                              id="line"
+                              placeholder="Line ID"
+                              value={editForm.line_id}
+                              onChange={(e) => setEditForm((p) => ({ ...p, line_id: e.target.value }))}
+                            />
                             <label htmlFor="line">Line ID</label>
                           </div>
                         </div>
+
                         <div className="col-md-4">
                           <div className="form-floating">
-                            <input className="form-control rounded-3" id="fb" placeholder="Facebook" value={editForm.facebook} onChange={(e) => setEditForm((p) => ({ ...p, facebook: e.target.value }))} />
+                            <input
+                              className="form-control rounded-3"
+                              id="fb"
+                              placeholder="Facebook"
+                              value={editForm.facebook}
+                              onChange={(e) => setEditForm((p) => ({ ...p, facebook: e.target.value }))}
+                            />
                             <label htmlFor="fb">Facebook</label>
                           </div>
                         </div>
+
                         <div className="col-md-4">
                           <div className="form-floating">
-                            <input className="form-control rounded-3" id="gh" placeholder="GitHub" value={editForm.github} onChange={(e) => setEditForm((p) => ({ ...p, github: e.target.value }))} />
+                            <input
+                              className="form-control rounded-3"
+                              id="gh"
+                              placeholder="GitHub"
+                              value={editForm.github}
+                              onChange={(e) => setEditForm((p) => ({ ...p, github: e.target.value }))}
+                            />
                             <label htmlFor="gh">GitHub</label>
                           </div>
                         </div>
@@ -427,8 +483,11 @@ export default function StudentProfilePage() {
                     </div>
                   </div>
                 </div>
+
                 <div className="modal-footer border-0">
-                  <button type="button" className="btn btn-outline-secondary rounded-pill ripple" onClick={() => setEditOpen(false)}>ยกเลิก</button>
+                  <button type="button" className="btn btn-outline-secondary rounded-pill ripple" onClick={() => setEditOpen(false)}>
+                    ยกเลิก
+                  </button>
                   <button className="btn btn-primary rounded-pill ripple" type="submit" disabled={editSaving}>
                     {editSaving ? (<><span className="spinner-border spinner-border-sm me-2" />กำลังบันทึก…</>) : ("บันทึก")}
                   </button>
@@ -439,6 +498,7 @@ export default function StudentProfilePage() {
         </div>
       )}
 
+
       {/* Bottom wave */}
       <svg className="wave" viewBox="0 0 1440 120" preserveAspectRatio="none" aria-hidden="true">
         <path d="M0,64L80,90.7C160,117,320,171,480,176C640,181,800,139,960,128C1120,117,1280,139,1360,149.3L1440,160L1440,0L1360,0C1280,0,1120,0,960,0C800,0,640,0,480,0C320,0,160,0,80,0L0,0Z" fill="#ffffff" fillOpacity="0.85"></path>
@@ -446,23 +506,16 @@ export default function StudentProfilePage() {
 
       {/* Local styles */}
       <style>{`
-        /* Animated background & blobs */
         .bg-animated{background:radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),radial-gradient(1000px 500px at 110% 10%, #e6f0ff 10%, transparent 55%),linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%);} 
         .glassy{backdrop-filter:blur(8px);} 
         .topbar{position:sticky;top:0;left:0;width:100%;background:linear-gradient(90deg, rgba(111,66,193,.9), rgba(142,92,255,.9));box-shadow:0 4px 16px rgba(111,66,193,.22);z-index:1040;border-bottom:1px solid rgba(255,255,255,.12);} 
-
-        /* Floating card subtle motion */
         .card-float{animation:floatY 6s ease-in-out infinite;} 
         @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
-
-        /* Ripple */
         .ripple{position:relative;overflow:hidden;} 
         .ripple:after{content:"";position:absolute;inset:0;border-radius:inherit;opacity:0;background:radial-gradient(circle at var(--x,50%) var(--y,50%), rgba(255,255,255,.45), transparent 40%);transform:scale(.2);transition:transform .3s, opacity .45s;pointer-events:none;} 
         .ripple:active:after{opacity:1;transform:scale(1);transition:0s;} 
         .ripple{--x:50%;--y:50%;} 
         .ripple:focus-visible{outline:3px solid rgba(142,92,255,.45);outline-offset:2px;} 
-
-        /* Background blobs */
         .bg-blob{position:absolute;filter:blur(60px);opacity:.55;z-index:0;} 
         .bg-blob-1{width:420px;height:420px;left:-120px;top:-80px;background:#d7c6ff;animation:drift1 18s ease-in-out infinite;} 
         .bg-blob-2{width:360px;height:360px;right:-120px;top:120px;background:#c6ddff;animation:drift2 22s ease-in-out infinite;} 
@@ -470,21 +523,19 @@ export default function StudentProfilePage() {
         @keyframes drift1{0%,100%{transform:translate(0,0)}50%{transform:translate(20px,10px)}} 
         @keyframes drift2{0%,100%{transform:translate(0,0)}50%{transform:translate(-16px,8px)}} 
         @keyframes drift3{0%,100%{transform:translate(0,0)}50%{transform:translate(12px,-12px)}} 
-
-        /* Wave */
         .wave{position:fixed;left:0;right:0;bottom:-1px;width:100%;height:120px;}
-
         .form-control:focus,.form-select:focus{box-shadow:0 0 0 .2rem rgba(111,66,193,.12);border-color:#8e5cff;}
       `}</style>
 
-      {/* ripple positioning script */}
-      <script dangerouslySetInnerHTML={{ __html: `
+      {/* ripple position */}
+      <script dangerouslySetInnerHTML={{
+        __html: `
         document.addEventListener('pointerdown', (e) => {
           const el = e.target.closest('.ripple');
           if (!el) return;
           const rect = el.getBoundingClientRect();
-          el.style.setProperty('--x', ((e.clientX - rect.left) / rect.width * 100).toFixed(2) + '%');
-          el.style.setProperty('--y', ((e.clientY - rect.top) / rect.height * 100).toFixed(2) + '%');
+          el.style.setProperty('--x', ((e.clientX - rect.left) / rect.width) * 100 + '%');
+          el.style.setProperty('--y', ((e.clientY - rect.top) / rect.height) * 100 + '%');
         }, { passive: true });
       `}} />
     </div>

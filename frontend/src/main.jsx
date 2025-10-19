@@ -13,15 +13,15 @@ import { AnnouncementsProvider } from "./contexts/AnnouncementsContext";
 import WelcomePage from "./components/WelcomePage";
 import LoginPage from "./components/LoginPage";
 import HomePage from "./components/HomePage";
-import StudentInfoPage from "./components/StudentInfoPage";
-import AddAnnouncementPage from "./components/AddAnnouncementPage";
+import StudentInfoPage from "./components/teacher/StudentInfoPage";
+import AddAnnouncementPage from "./components/teacher/AddAnnouncementPage";
 import AdminDashboard from "./components/admin/AdminDashboard";
 import ManageUsersPage from "./components/admin/ManageUsersPage";
 import CompetencyFormPage from "./components/CompetencyFormPage";
 import StudentProfilePage from "./components/StudentProfilePage";
-import TeacherAnnouncementsPage from "./components/TeacherAnnouncementsPage";
-import EditAnnouncementPage from "./components/EditAnnouncementPage";
-import ApplicantsManagePage from "./components/ApplicantsManagePage";
+import TeacherAnnouncementsPage from "./components/teacher/TeacherAnnouncementsPage";
+import EditAnnouncementPage from "./components/teacher/EditAnnouncementPage";
+import ApplicantsManagePage from "./components/teacher/ApplicantsManagePage";
 import AdminContactInbox from "./components/admin/AdminContactInbox";
 
 

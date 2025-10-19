@@ -1,8 +1,8 @@
 // src/components/AddAnnouncementPage.jsx — no-animation, clean UI
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext";
-import { createAnnouncement } from "../services/announcementsApi";
+import { useAuth } from "../../contexts/AuthContext";
+import { createAnnouncement } from "../../services/announcementsApi";
 import Swal from "sweetalert2";
 
 /* ===== Helpers ===== */

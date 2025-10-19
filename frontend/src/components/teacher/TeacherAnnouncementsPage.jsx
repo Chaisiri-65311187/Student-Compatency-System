@@ -1,11 +1,11 @@
 // src/pages/TeacherAnnouncementsPage.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import {
   listMyAnnouncements,
   deleteAnnouncement,
-} from "../services/announcementsApi";
+} from "../../services/announcementsApi";
 import Swal from "sweetalert2";
 
 /* ===== helpers (TH time-safe) ===== */

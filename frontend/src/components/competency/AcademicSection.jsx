@@ -1,4 +1,3 @@
-// src/components/competency/AcademicSection.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   getCompetencyProfile, updateCompetencyProfile,
@@ -8,18 +7,18 @@ import {
 import Swal from "sweetalert2";
 import "sweetalert2/dist/sweetalert2.min.css";
 
-const GRADE_OPTIONS = ["","A","B+","B","C+","C","D+","D","F"];
+import { GRADE_OPTIONS } from "../../utils/scoring";
 
-// ✅ helper กันค้าง: ใส่ timeout ให้ทุกคำสั่ง async
+// helper: timeout กันค้าง
 function withTimeout(promise, ms = 15000) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`การดำเนินการนานเกินไป (${ms/1000}s)`)), ms);
+    const t = setTimeout(() => reject(new Error(`การดำเนินการนานเกินไป (${ms / 1000}s)`)), ms);
     promise.then((v) => { clearTimeout(t); resolve(v); })
-           .catch((e) => { clearTimeout(t); reject(e); });
+      .catch((e) => { clearTimeout(t); reject(e); });
   });
 }
 
-export default function AcademicSection({ user }){
+export default function AcademicSection({ user }) {
   const [majorId, setMajorId] = useState(null);
   const [yearLevel, setYearLevel] = useState(4);
   const [gpa, setGpa] = useState("");
@@ -33,9 +32,9 @@ export default function AcademicSection({ user }){
   const [loading, setLoading] = useState(true);
 
   /* 1) โหลดโปรไฟล์ */
-  useEffect(()=>{
+  useEffect(() => {
     if (!user?.id) return;
-    (async ()=>{
+    (async () => {
       setLoading(true);
       try {
         const res = await withTimeout(getCompetencyProfile(user.id), 15000);
@@ -48,18 +47,18 @@ export default function AcademicSection({ user }){
         setLoading(false);
       }
     })();
-  },[user?.id]);
+  }, [user?.id]);
 
   /* 2) โหลดวิชาบังคับ + เกรดที่เคยบันทึก */
-  useEffect(()=>{
+  useEffect(() => {
     if (!user?.id || !majorId || !yearLevel) return;
 
-    (async ()=>{
+    (async () => {
       setLoading(true);
       try {
         const tasks = [];
-        for (let y = 1; y <= yearLevel; y++){
-          for (let s = 1; s <= 2; s++){
+        for (let y = 1; y <= yearLevel; y++) {
+          for (let s = 1; s <= 2; s++) {
             tasks.push(
               withTimeout(getRequiredCourses({ major: majorId, year: y, sem: s }), 15000)
                 .then(r => ({ type: "req", y, s, list: r.required || [] }))
@@ -76,20 +75,21 @@ export default function AcademicSection({ user }){
         const initialFormGrades = {};
         let saved = {};
 
-        results.forEach(it=>{
-          if (it.type === "req"){
+        results.forEach(it => {
+          if (it.type === "req") {
             const key = `${it.y}-${it.s}`;
             nextReqMap[key] = it.list;
             it.list.forEach(c => {
               if (initialFormGrades[c.code] === undefined) initialFormGrades[c.code] = "";
             });
-          } else if (it.type === "grades"){
+          } else if (it.type === "grades") {
             saved = it.map;
           }
         });
 
-        Object.keys(initialFormGrades).forEach(code=>{
-          if (saved[code]) initialFormGrades[code] = saved[code];
+        Object.keys(initialFormGrades).forEach(code => {
+          const v = saved[code];
+          initialFormGrades[code] = v == null ? "" : v; // null -> ""
         });
 
         setReqMap(nextReqMap);
@@ -98,45 +98,53 @@ export default function AcademicSection({ user }){
         setLoading(false);
       }
     })();
-  },[user?.id, majorId, yearLevel]);
+  }, [user?.id, majorId, yearLevel]);
 
-  /* 3) รวมรายการบันทึก */
-  const itemsForSave = useMemo(()=>{
+  /* 3) รวมรายการบันทึก — ส่งค่าว่างเป็น null */
+  const itemsForSave = useMemo(() => {
     const items = [];
-    for (let y = 1; y <= yearLevel; y++){
-      for (let s = 1; s <= 2; s++){
+    for (let y = 1; y <= yearLevel; y++) {
+      for (let s = 1; s <= 2; s++) {
         const list = reqMap[`${y}-${s}`] || [];
         list.forEach(c => {
-          const letter = grades[c.code];
-          if (letter) {
-            items.push({
-              course_code: c.code,
-              letter,
-              year: 2568, // TODO
-              semester: s,
-            });
-          }
+          const raw = grades[c.code];              // "" | "A" | ... | "S" | "U"
+          const letter = raw === "" ? null : raw;  // "" -> null
+          items.push({
+            course_code: c.code,
+            letter,
+            year: 2568,     // ถ้าเก็บ พ.ศ. ให้ backend แปลงเป็น ค.ศ.
+            semester: s,
+          });
         });
       }
     }
     return items;
-  },[reqMap, grades, yearLevel]);
+  }, [reqMap, grades, yearLevel]);
+
+  const filledCount = useMemo(
+    () => itemsForSave.filter(it => it.letter != null && it.letter !== "").length,
+    [itemsForSave]
+  );
+  const emptyCount = useMemo(
+    () => itemsForSave.length - filledCount,
+    [itemsForSave, filledCount]
+  );
 
   /* 4) เปลี่ยนเกรด */
   const onChangeGrade = (code, val) =>
-    setGrades(prev => ({ ...prev, [code]: val }));
+    setGrades(prev => ({ ...prev, [code]: GRADE_OPTIONS.includes(val) ? val : "" }));
 
-  /* 5) บันทึกทั้งหมด (กันค้างด้วย timeout + ปิดกล่องแน่นอน) */
+  /* 5) บันทึกทั้งหมด */
   const onSaveAll = async () => {
-    if (saving) return; // กันดับเบิลคลิก
-    const gradeCount = itemsForSave.length;
-
+    if (saving) return;
     const confirm = await Swal.fire({
       title: "ยืนยันบันทึกข้อมูล",
       html: `
         <div class="text-start">
           <div>• อัปเดต <b>GPA</b> เป็น: <b>${gpa === "" ? "ไม่ระบุ" : gpa}</b></div>
-          <div>• บันทึกเกรดรายวิชา: <b>${gradeCount}</b> รายการ</div>
+          <div>• บันทึกเกรดรายวิชา: รวม <b>${itemsForSave.length}</b> วิชา</div>
+          <div class="ms-3">- มีเกรดแล้ว: <b style="color:#198754">${filledCount}</b> รายการ</div>
+          <div class="ms-3">- ยังไม่ออก/ว่าง: <b style="color:#6c757d">${emptyCount}</b> รายการ</div>
           <div class="mt-2 small text-muted">ชั้นปีปัจจุบัน: ปี ${yearLevel}</div>
         </div>
       `,
@@ -150,7 +158,7 @@ export default function AcademicSection({ user }){
 
     setSaving(true);
     try {
-      await Swal.fire({
+      Swal.fire({
         title: "กำลังบันทึก...",
         html: "โปรดรอสักครู่ ระบบกำลังอัปเดตข้อมูล",
         allowOutsideClick: false,
@@ -158,13 +166,13 @@ export default function AcademicSection({ user }){
         didOpen: () => Swal.showLoading(),
       });
 
-      // (ก) อัปเดตโปรไฟล์
+      // (ก) โปรไฟล์ (GPA/ชั้นปี)
       await withTimeout(updateCompetencyProfile(user.id, {
-        manual_gpa: gpa === "" ? null : Number(gpa),
+        manual_gpa: gpa === "" ? null : Math.max(0, Math.min(4, Number(gpa))),
         year_level: Number(yearLevel),
       }), 15000);
 
-      // (ข) เกรดรายวิชา (ถ้ามี)
+      // (ข) เกรดรายวิชา (รวมค่าว่างเป็น null)
       if (itemsForSave.length) {
         await withTimeout(saveCourseGrades({ account_id: user.id, items: itemsForSave }), 20000);
       }
@@ -174,12 +182,13 @@ export default function AcademicSection({ user }){
       setGrades(prev => {
         const next = { ...prev };
         Object.keys(next).forEach(code => {
-          if (saved.map?.[code]) next[code] = saved.map[code];
+          const v = saved.map?.[code];
+          next[code] = v == null ? "" : v;
         });
         return next;
       });
 
-      // (ง) คำนวณคะแนนปีปัจจุบัน (ทั้ง 2 เทอม) — ถ้าตัวใด error จะไม่ค้าง
+      // (ง) คำนวณคะแนนปีปัจจุบัน 2 เทอม (กัน error ด้วย .catch)
       const [r1, r2] = await Promise.all([
         withTimeout(recalcAcademic(user.id, { year: Number(yearLevel), sem: 1 }), 15000).catch(() => null),
         withTimeout(recalcAcademic(user.id, { year: Number(yearLevel), sem: 2 }), 15000).catch(() => null),
@@ -187,17 +196,12 @@ export default function AcademicSection({ user }){
       setCalc1(r1);
       setCalc2(r2);
 
-      // ปิด loading (ถ้ายังเปิด) แล้ว Toast สำเร็จ
       if (Swal.isVisible()) await Swal.close();
       await Swal.mixin({ toast: true, position: "top-end", showConfirmButton: false, timer: 2500, timerProgressBar: true })
         .fire({ icon: "success", title: "บันทึกด้านวิชาการสำเร็จ" });
-
     } catch (e) {
       console.error(e);
-      // ปิด loading ให้ชัวร์ก่อนแสดง error
-      if (Swal.isVisible()) {
-        try { await Swal.close(); } catch {}
-      }
+      if (Swal.isVisible()) { try { await Swal.close(); } catch {} }
       await Swal.fire({
         icon: "error",
         title: "บันทึกไม่สำเร็จ",
@@ -206,46 +210,58 @@ export default function AcademicSection({ user }){
       });
     } finally {
       setSaving(false);
-      // กันหลงเหลือ modal
-      if (Swal.isVisible()) {
-        try { await Swal.close(); } catch {}
-      }
+      if (Swal.isVisible()) { try { await Swal.close(); } catch {} }
     }
   };
 
+  /* === UI Helpers === */
   const renderTable = (list, y, s) => (
-    <table className="table align-middle">
-      <thead>
-        <tr>
-          <th style={{width:120}}>รหัส</th>
-          <th>ชื่อวิชา</th>
-          <th style={{width:90}}>หน่วยกิต</th>
-          <th style={{width:160}}>เกรด</th>
-        </tr>
-      </thead>
-      <tbody>
-        {(list||[]).map(c=>(
-          <tr key={`${y}-${s}-${c.code}`}>
-            <td>{c.code}</td>
-            <td>{c.name_th}</td>
-            <td>{c.credit ?? "-"}</td>
-            <td>
-              <select
-                className="form-select"
-                value={grades[c.code] || ""}
-                onChange={e=>onChangeGrade(c.code, e.target.value)}
-              >
-                {GRADE_OPTIONS.map(g => <option key={g} value={g}>{g || "เลือก"}</option>)}
-              </select>
-            </td>
+    <>
+      <table className="table align-middle">
+        <thead>
+          <tr>
+            <th style={{ width: 120 }}>รหัส</th>
+            <th>ชื่อวิชา</th>
+            <th style={{ width: 90 }}>หน่วยกิต</th>
+            <th style={{ width: 180 }}>เกรด</th>
           </tr>
-        ))}
-        {!list?.length && (
-          <tr><td colSpan={4} className="text-muted">ไม่มีวิชาบังคับ ปี {y} เทอม {s}</td></tr>
-        )}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {(list || []).map(c => (
+            <tr key={`${y}-${s}-${c.code}`}>
+              <td>{c.code}</td>
+              <td>{c.name_th}</td>
+              <td>{c.credit ?? "-"}</td>
+              <td>
+                <select
+                  className="form-select"
+                  value={grades[c.code] || ""}
+                  onChange={e => onChangeGrade(c.code, e.target.value)}
+                >
+                  {/* ค่า null/ยังไม่ออก */}
+                  <option value="">— ยังไม่ออก —</option>
+                  {GRADE_OPTIONS.filter(g => g !== "").map(g => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
   );
+
+  const renderTerm = (y, s) => {
+    const list = reqMap[`${y}-${s}`] || [];
+    if (!list.length) return null; // ซ่อนเทอมที่ไม่มีวิชาบังคับ
+    return (
+      <>
+        <h6 className="mb-2">เทอม {s}</h6>
+        {renderTable(list, y, s)}
+      </>
+    );
+  };
 
   if (loading) {
     return (
@@ -260,8 +276,8 @@ export default function AcademicSection({ user }){
       <div className="row g-3 mb-3">
         <div className="col-12 col-md-2">
           <label className="form-label">ชั้นปี</label>
-          <select className="form-select" value={yearLevel} disabled onChange={e=>setYearLevel(+e.target.value)}>
-            {[1,2,3,4].map(v=> <option key={v} value={v}>{v}</option>)}
+          <select className="form-select" value={yearLevel} disabled>
+            {[1, 2, 3, 4].map(v => <option key={v} value={v}>{v}</option>)}
           </select>
           <div className="form-text">ดึงจากโปรไฟล์นิสิต</div>
         </div>
@@ -270,19 +286,25 @@ export default function AcademicSection({ user }){
           <input
             className="form-control"
             type="number" step="0.01" min="0" max="4"
-            value={gpa} onChange={e=>setGpa(e.target.value)}
+            value={gpa} onChange={e => setGpa(e.target.value)}
           />
         </div>
       </div>
 
-      {Array.from({ length: yearLevel }, (_, i) => i + 1).map(y => (
-        <div key={y} className="mb-4">
-          <h6 className="mb-2">ปี {y} – เทอม 1</h6>
-          {renderTable(reqMap[`${y}-1`] || [], y, 1)}
-          <h6 className="mb-2 mt-3">ปี {y} – เทอม 2</h6>
-          {renderTable(reqMap[`${y}-2`] || [], y, 2)}
-        </div>
-      ))}
+      {/* แสดงหัวปีเสมอ แต่ซ่อนเฉพาะเทอมที่ไม่มีวิชาบังคับ */}
+      {Array.from({ length: yearLevel }, (_, i) => i + 1).map(y => {
+        const t1 = renderTerm(y, 1);
+        const t2 = renderTerm(y, 2);
+        if (!t1 && !t2) return null; // ปีนี้ไม่มีวิชาบังคับเลย
+
+        return (
+          <div key={y} className="mb-4">
+            <h5 className="mb-3">ปี {y}</h5>
+            {t1}
+            {t2 && <div className="mt-3">{t2}</div>}
+          </div>
+        );
+      })}
 
       <div className="d-flex gap-2 mt-3">
         <button className="btn btn-primary" onClick={onSaveAll} disabled={saving}>
@@ -290,7 +312,7 @@ export default function AcademicSection({ user }){
           บันทึกทั้งหมด
         </button>
         <span className="text-muted small align-self-center">
-          ระบบจะบันทึก GPA + เกรดทุกวิชาที่แสดง และดึงค่าจากฐานข้อมูลมาแสดงทันที
+          ระบบจะบันทึก GPA + เกรดทุกวิชาที่แสดง (รวมวิชาที่ยังไม่ออกเกรดเป็นค่า null) และดึงค่าจากฐานข้อมูลมาแสดงทันที
         </span>
       </div>
 

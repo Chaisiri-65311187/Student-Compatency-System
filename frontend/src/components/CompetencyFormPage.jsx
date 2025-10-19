@@ -130,7 +130,7 @@ export default function CompetencyFormPage() {
       { key: "academic", label: "1) วิชาการ", icon: "bi-journal-text" },
       { key: "language", label: "2) ภาษา (CEPT)", icon: "bi-translate" },
       { key: "tech", label: "3) ทักษะเทคโนโลยี", icon: "bi-cpu" },
-      { key: "social", label: "4) สังคม", icon: "bi-people" },
+      { key: "social", label: "4) กิจกรรมทางสังคม", icon: "bi-people" },
       { key: "comm", label: "5) การสื่อสาร", icon: "bi-megaphone" },
     ],
     []

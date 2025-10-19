@@ -12,7 +12,10 @@ const pool = require("../db");
  * Utilities / Helpers
  * -----------------------------------------*/
 
-// เกรด → คะแนน fallback
+// เกรดที่อนุญาต (รวม S/U)
+const VALID_LETTERS = ["A", "B+", "B", "C+", "C", "D+", "D", "F", "S", "U"];
+
+// เกรด → คะแนน fallback (ไม่มี S/U ใน map เพราะไม่คิด GPA)
 const FALLBACK_POINTS = {
   A: 4.0, "B+": 3.3, B: 3.0, "C+": 2.3, C: 2.0, "D+": 1.3, D: 1.0, F: 0.0,
 };
@@ -30,7 +33,16 @@ async function loadGradeScaleMap() {
   }
 }
 
+// แปลงปี พ.ศ. → ค.ศ. (ถ้าตัวเลข > 2400 ให้ลบ 543)
+function normalizeYear(y) {
+  let year = Number(y);
+  if (!Number.isFinite(year)) return null;
+  if (year > 2400) year = year - 543;
+  return year;
+}
+
 // คำนวณ GPA จาก student_course_grades
+// - ไม่นับวิชาที่ letter เป็น null / S / U
 async function computeGPA(accountId) {
   const gradeMap = await loadGradeScaleMap();
   const [rows] = await pool.query(
@@ -40,18 +52,29 @@ async function computeGPA(accountId) {
      WHERE scg.account_id = ?`,
     [accountId]
   );
+
   let sumPoints = 0, sumCredits = 0;
   for (const r of rows) {
-    const gp = gradeMap[r.letter] ?? 0;
-    const cr = Number(r.credit || 0);
-    sumPoints += gp * cr;
-    sumCredits += cr;
+    const letter = r.letter;
+    const credit = Number(r.credit || 0);
+
+    // ข้ามกรณีไม่มีเกรดและ S/U
+    if (!letter || letter === "S" || letter === "U") continue;
+
+    const gp = gradeMap[letter];
+    if (gp == null) continue;
+
+    sumPoints += gp * credit;
+    sumCredits += credit;
   }
+
   if (!sumCredits) return null;
   return Math.round((sumPoints / sumCredits) * 100) / 100;
 }
 
-// คำนวณ % ผ่านวิชาบังคับของสาขา/ปี/เทอม
+// คำนวณ % ผ่านวิชาบังคับของสาขา/ปี/เทอม (เดิม)
+// - เกณฑ์ผ่าน: letter === 'S' หรือ (มี point >= 1.0)
+// - U/null ไม่ผ่าน
 async function computeCoreCompletionPct(accountId, majorId, yearLevel, semester) {
   const gradeMap = await loadGradeScaleMap();
   const [reqRows] = await pool.query(
@@ -72,11 +95,60 @@ async function computeCoreCompletionPct(accountId, majorId, yearLevel, semester)
   );
 
   const passedSet = new Set(
-    got.filter((g) => (gradeMap[g.letter] ?? 0) >= 1.0).map((g) => g.course_id)
+    got
+      .filter((g) => {
+        const L = g.letter;
+        if (!L) return false;          // ยังไม่ออก
+        if (L === "S") return true;    // S = ผ่าน
+        if (L === "U") return false;   // U = ไม่ผ่าน
+        return (gradeMap[L] ?? 0) >= 1.0; // เกรดปกติ: D ขึ้นไปผ่าน (>=1.0)
+      })
+      .map((g) => g.course_id)
   );
+
   const passed = reqRows.filter((r) => passedSet.has(r.course_id)).length;
   const pct = (passed / reqRows.length) * 100;
   return Math.round(pct * 100) / 100;
+}
+
+/** ✅ ใหม่: คำนวณ % ผ่านวิชาบังคับ "รวมทุกชั้นปี" ของสาขา */
+async function computeCoreCompletionPctAll(accountId, majorId) {
+  const gradeMap = await loadGradeScaleMap();
+
+  // 1) ดึงรายวิชาบังคับทั้งหมดของสาขา
+  const [reqRows] = await pool.query(
+    `SELECT mrc.course_id
+     FROM major_required_courses mrc
+     WHERE mrc.major_id = ?`,
+    [majorId]
+  );
+  if (!reqRows.length) return 0;
+
+  const courseIds = reqRows.map(r => r.course_id);
+
+  // 2) ดึงเกรดของนิสิตเฉพาะวิชาเหล่านี้ (ทุกปี/เทอม)
+  const placeholders = courseIds.map(() => "?").join(",");
+  const [grades] = await pool.query(
+    `SELECT scg.course_id, scg.letter
+     FROM student_course_grades scg
+     WHERE scg.account_id = ?
+       AND scg.course_id IN (${placeholders})`,
+    [accountId, ...courseIds]
+  );
+
+  // 3) นับวิชาที่ "ผ่าน" (กันนับซ้ำด้วย Set)
+  const passedSet = new Set(
+    grades.filter(g => {
+      const L = g.letter;
+      if (!L) return false;
+      if (L === "S") return true;
+      if (L === "U") return false;
+      return (gradeMap[L] ?? 0) >= 1.0;
+    }).map(g => g.course_id)
+  );
+
+  const pct = (passedSet.size / reqRows.length) * 100;
+  return Math.round(pct * 100) / 100; // ปัดทศนิยม 2 ตำแหน่ง
 }
 
 // GPA → คะแนน (0..25)
@@ -134,7 +206,7 @@ router.get("/profile/:accountId", async (req, res) => {
     console.error("GET /profile error", e);
     res.status(500).json({ message: "Server error" });
   }
-});;
+});
 
 router.put("/profile/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
@@ -232,22 +304,43 @@ router.post("/courses/grades/bulk", async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
+
     for (const it of items) {
-      const [crs] = await conn.query("SELECT id FROM course_catalog WHERE code=?", [String(it.course_code)]);
+      const code = String(it.course_code || "").trim();
+      if (!code) continue;
+
+      const [crs] = await conn.query("SELECT id FROM course_catalog WHERE code=?", [code]);
       if (!crs.length) continue;
+
       const course_id = crs[0].id;
-      await conn.query("DELETE FROM student_course_grades WHERE account_id=? AND course_id=?", [account_id, course_id]);
+
+      // แปลงค่าตามสเปค
+      let letter = it.letter === "" ? null : it.letter;
+      if (letter && !VALID_LETTERS.includes(letter)) {
+        // ถ้าไม่ใช่เกรดที่รู้จัก ให้เก็บเป็น null (กัน error)
+        letter = null;
+      }
+
+      const taken_year = normalizeYear(it.year ?? null);
+      const taken_semester = [1, 2].includes(Number(it.semester)) ? Number(it.semester) : null;
+
+      // ล้างของเดิมแล้วค่อย insert (คงพฤติกรรมเดิม)
+      await conn.query(
+        "DELETE FROM student_course_grades WHERE account_id=? AND course_id=?",
+        [account_id, course_id]
+      );
       await conn.query(
         "INSERT INTO student_course_grades (account_id, course_id, letter, taken_year, taken_semester) VALUES (?,?,?,?,?)",
-        [account_id, course_id, it.letter, it.year ?? null, it.semester ?? null]
+        [account_id, course_id, letter, taken_year, taken_semester]
       );
     }
+
     await conn.commit();
     res.json({ ok: true, count: items.length });
   } catch (e) {
     await conn.rollback();
     console.error("POST /courses/grades/bulk error", e);
-    res.status(500).json({ message: "save grades failed" });
+    res.status(500).json({ message: e.message || "save grades failed" });
   } finally {
     conn.release();
   }
@@ -279,7 +372,6 @@ router.get("/language/latest/:accountId", async (req, res) => {
 
 // ✅ ใหม่: ดึง "ล่าสุดต่อ framework" ทั้ง 3 อย่างในคำขอเดียว
 // GET /api/competency/language/latest-all/:accountId
-// ✅ เพิ่ม endpoint ดึงผลสอบภาษา "ล่าสุดต่อ framework" (CEPT, ICT, ITPE)
 router.get("/language/latest-all/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
   if (!accountId) return res.status(400).json({ message: "invalid accountId" });
@@ -318,7 +410,7 @@ router.post("/language", async (req, res) => {
     await pool.query(
       `INSERT INTO student_language_results
        (account_id, framework, level, taken_at, score_raw)
-       VALUES (?,?,?,?,?)`,
+       VALUES (?,?,?,?,?)` ,
       [account_id, framework, level ?? null, taken_at ?? null, score_raw ?? null]
     );
     res.json({ ok: true });
@@ -331,6 +423,7 @@ router.post("/language", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
 /* -------------------------------------------
  * 5) ใบรับรอง/อบรม (Tech)
  * -----------------------------------------*/
@@ -412,13 +505,21 @@ router.post("/activities", async (req, res) => {
 
 /* -------------------------------------------
  * 7) สรุปคะแนนด้านวิชาการ (GPA + Core)
+ *    - year/sem: เป็น optional แล้ว
+ *      • ถ้าส่ง → คิดเฉพาะปี/เทอม
+ *      • ถ้าไม่ส่ง → คิดรวมทุกชั้นปี (แก้เคสที่ขึ้น 0% ตลอด)
  * -----------------------------------------*/
 router.post("/recalculate/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
-  const yearLevel = Number(req.query.year || 0);
-  const semester = Number(req.query.sem || 0);
-  if (!accountId || !yearLevel || !semester)
-    return res.status(400).json({ message: "accountId, year, sem required" });
+
+  // เดิมบังคับ year/sem → เปลี่ยนเป็น optional
+  const yearLevel = req.query.year != null ? Number(req.query.year) : null;
+  const semester  = req.query.sem  != null ? Number(req.query.sem)  : null;
+
+  if (!accountId) {
+    return res.status(400).json({ message: "accountId required" });
+  }
+
   try {
     const [[acct]] = await pool.query(
       `SELECT id, major_id, manual_gpa FROM accounts WHERE id=?`,
@@ -432,21 +533,28 @@ router.post("/recalculate/:accountId", async (req, res) => {
       : (computed_gpa ?? null);
     const score_gpa = scoreFromGPA(gpaUsed);
 
-    const pct = await computeCoreCompletionPct(accountId, acct.major_id, yearLevel, semester);
-    const score_core = Math.round(Math.min(1, pct / 100) * 15 * 100) / 100;
+    // ✅ ใช้สูตรรวมทุกชั้นปีเมื่อไม่ส่ง year/sem
+    let core_completion_pct = 0;
+    if (Number.isFinite(yearLevel) && Number.isFinite(semester) && yearLevel && semester) {
+      core_completion_pct = await computeCoreCompletionPct(accountId, acct.major_id, yearLevel, semester);
+    } else {
+      core_completion_pct = await computeCoreCompletionPctAll(accountId, acct.major_id);
+    }
+
+    const score_core = Math.round(Math.min(1, core_completion_pct / 100) * 15 * 100) / 100;
     const score_academic = Math.round((score_gpa + score_core) * 100) / 100;
 
     res.json({
       account_id: accountId,
-      year_level: yearLevel,
-      semester,
+      year_level: yearLevel,           // อาจเป็น null ถ้าไม่ส่ง
+      semester,                        // อาจเป็น null ถ้าไม่ส่ง
       manual_gpa: acct.manual_gpa ?? null,
       computed_gpa,
       gpa_used: gpaUsed,
-      score_gpa,
-      core_completion_pct: pct,
-      score_core,
-      score_academic,
+      score_gpa,                       // /25
+      core_completion_pct,             // ✅ จะไม่ 0% ถ้ามีวิชาที่ผ่านจริงแม้ต่างปี/เทอม
+      score_core,                      // /15
+      score_academic,                  // /40 (เดิม)
     });
   } catch (e) {
     console.error("POST /recalculate error", e);

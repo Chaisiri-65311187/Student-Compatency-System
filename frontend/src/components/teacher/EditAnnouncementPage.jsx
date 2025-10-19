@@ -1,12 +1,12 @@
 // src/pages/EditAnnouncementPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../../contexts/AuthContext";
 import {
   getAnnouncement as getAnnouncementById,
   createAnnouncement,
   updateAnnouncement,
-} from "../services/announcementsApi";
+} from "../../services/announcementsApi";
 
 const tz = "Asia/Bangkok";
 const toDateInput = (v) => (v ? String(v).slice(0, 10) : "");

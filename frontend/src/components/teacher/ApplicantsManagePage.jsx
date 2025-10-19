@@ -1,7 +1,7 @@
 // src/pages/ApplicantsManagePage.jsx — refined UI (with Swal + capacity guard)
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getAnnouncement, listApplicants, changeApplicationStatus } from "../services/announcementsApi";
+import { getAnnouncement, listApplicants, changeApplicationStatus } from "../../services/announcementsApi";
 import Swal from "sweetalert2";
 
 const StatusBadge = ({ status }) => {
