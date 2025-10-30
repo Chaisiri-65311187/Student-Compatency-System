@@ -591,7 +591,7 @@ export default function StudentInfoPage() {
                   {(user?.role === "teacher" || user?.role === "admin") && (
                     <>
                       <button
-                        className="btn btn-outline-light btn-sm rounded-pill ripple"
+                        className="btn btn-outline-primary rounded-pill ripple"
                         onClick={() => navigate("/teacher-announcements")}
                         title="จัดการประกาศ"
                         aria-label="จัดการประกาศ"
@@ -599,7 +599,7 @@ export default function StudentInfoPage() {
                         <i className="bi bi-megaphone me-1" /> จัดการประกาศ
                       </button>
                       <button
-                        className="btn btn-warning btn-sm rounded-pill ripple"
+                        className="btn btn-outline-primary rounded-pill ripple"
                         onClick={() => navigate("/create-announcement")}
                         title="เพิ่มประกาศ"
                         aria-label="เพิ่มประกาศ"

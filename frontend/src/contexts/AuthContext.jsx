@@ -1,6 +1,6 @@
 // src/contexts/AuthContext.jsx
 import React, { createContext, useState, useContext, useEffect } from "react";
-import { loginUser } from "../services/api"; // เรียก backend
+import { loginUser } from "../services/api";
 
 const AuthContext = createContext();
 export const useAuth = () => useContext(AuthContext);
@@ -8,52 +8,64 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
 
-  // ✅ โหลดสถานะผู้ใช้จาก sessionStorage (จะหายเมื่อปิดแท็บ/ปิดเบราว์เซอร์)
+  // ✅ โหลดสถานะผู้ใช้จาก sessionStorage (ยังอยู่หลัง F5, หายเมื่อปิดแท็บโดยอัตโนมัติ)
   useEffect(() => {
-    const savedUser = sessionStorage.getItem("user");
-    if (savedUser) setUser(JSON.parse(savedUser));
+    try {
+      const saved = sessionStorage.getItem("user");
+      if (saved) setUser(JSON.parse(saved));
+    } catch {
+      sessionStorage.removeItem("user");
+    }
   }, []);
 
-  // ✅ login
+  // ✅ login → เก็บใน sessionStorage
   const login = async (username, password) => {
-    try {
-      const res = await loginUser(username.trim(), password);
-      if (res && res.user) {
-        setUser(res.user);
-        // ใช้ sessionStorage แทน localStorage
-        sessionStorage.setItem("user", JSON.stringify(res.user));
-        return res.user;
-      }
-      return null;
-    } catch (err) {
-      throw err;
+    const res = await loginUser(username.trim(), password);
+    if (res?.user) {
+      setUser(res.user);
+      sessionStorage.setItem("user", JSON.stringify(res.user));
+      return res.user;
     }
+    return null;
   };
 
-  // ✅ logout
+  // ✅ logout → ล้าง sessionStorage + แจ้ง backend ตามปกติ
   const logout = () => {
     setUser(null);
     sessionStorage.removeItem("user");
-    // (ถ้ามี cookie-based session ให้แจ้ง backend logout ด้วย)
     try {
       fetch("/api/logout", { method: "POST", credentials: "include" });
     } catch {}
   };
 
-  // ✅ เมื่อปิดแท็บ / ปิดเบราว์เซอร์ → ล้าง session อัตโนมัติ
+  // ❌ อย่าใช้ beforeunload/pagehide เคลียร์ user
+  //    เพราะมันจะทำงานตอนรีเฟรชด้วย ทำให้เด้งออก
+  //    sessionStorage จะหายเองเมื่อปิดแท็บ/ปิดเบราว์เซอร์ ไม่ต้องจัดการเพิ่ม
+
+  // 🧩 (ออปชัน) ซิงก์การล็อกเอาท์ข้ามแท็บ:
   useEffect(() => {
-    const handleUnload = () => {
-      sessionStorage.removeItem("user");
-      try {
-        navigator.sendBeacon?.("/api/logout"); // แจ้ง backend แบบเบาๆ
-      } catch {}
+    const onStorage = (e) => {
+      if (e.key === "logout_all_tabs" && e.newValue) {
+        setUser(null);
+        sessionStorage.removeItem("user");
+      }
     };
-    window.addEventListener("beforeunload", handleUnload);
-    return () => window.removeEventListener("beforeunload", handleUnload);
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
+  // เวลา logout ให้ปล่อยสัญญาณไปยังแท็บอื่น (ถ้าเปิดหลายแท็บ)
+  const logoutAllTabs = () => {
+    logout();
+    try {
+      localStorage.setItem("logout_all_tabs", Date.now().toString());
+      // เคลียร์คีย์เพื่อไม่ทิ้งขยะ
+      setTimeout(() => localStorage.removeItem("logout_all_tabs"), 0);
+    } catch {}
+  };
+
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, login, logout, logoutAllTabs }}>
       {children}
     </AuthContext.Provider>
   );
