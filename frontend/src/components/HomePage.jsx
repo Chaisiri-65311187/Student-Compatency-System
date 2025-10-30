@@ -1,14 +1,14 @@
 // src/components/HomePage.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { getCompetencyProfile } from "../services/competencyApi";
-import PeerEvaluationForm from "../components/competency/PeerEvaluationForm";
 import {
   listAnnouncements,
   listMyApplications,
   applyAnnouncement,
   withdrawApplication,
+  getAnnouncement, // 👈 ใช้เช็กสดก่อนสมัคร
 } from "../services/announcementsApi";
 
 /* ===== Date helpers (TH) ===== */
@@ -24,13 +24,9 @@ const dateTH = (d) => {
   const dt = parseSafeDate(d);
   if (!dt) return "-";
   return new Intl.DateTimeFormat("th-TH", {
-    timeZone: tz,
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
+    timeZone: tz, day: "2-digit", month: "short", year: "numeric",
   }).format(dt);
 };
-const formatDateTH = (s) => dateTH(s);
 const timeHM = (t) => {
   if (!t) return "";
   if (typeof t === "string") {
@@ -40,12 +36,7 @@ const timeHM = (t) => {
   try {
     const dt = new Date(`1970-01-01T${t}`);
     if (!isNaN(dt.getTime())) {
-      return dt.toLocaleTimeString("th-TH", {
-        timeZone: tz,
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      });
+      return dt.toLocaleTimeString("th-TH", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
     }
   } catch {}
   return String(t).slice(0, 5);
@@ -65,6 +56,89 @@ const rangeLine = (p) => {
 /* ===== UI const ===== */
 const PURPLE = "#6f42c1";
 
+/* ===== Normalizer & close rules (ไม่เชื่อ remaining จาก BE) ===== */
+function normalizeAnnouncement(r) {
+  const rawCap = r.capacity ?? r.seats;
+  const capacity =
+    rawCap == null || String(rawCap).trim() === "" ? null : Number(rawCap);
+
+  // รองรับหลายชื่อ field ของ "จำนวนที่กินที่นั่งไปแล้ว"
+  const acceptedLike = [
+    r.accepted_count, r.approved_count, r.filled, r.current,
+    r.applied_count, r.app_count, r.accepted, r.count
+  ]
+    .map((v) => (Number.isFinite(Number(v)) ? Number(v) : 0))
+    .reduce((a, b) => Math.max(a, b), 0);
+
+  const completed = Number.isFinite(Number(r.completed_count)) ? Number(r.completed_count) : 0;
+  const applicants = Number.isFinite(Number(r.applicants_count)) ? Number(r.applicants_count) : 0;
+
+  // ใช้ค่าสูงสุดของ acceptedLike กับ applicants (กันฝั่งหนึ่งไม่อัปเดต)
+  const occupiedBase = Math.max(acceptedLike, applicants);
+  const occupied = occupiedBase + completed;
+  const remaining = capacity == null ? null : Math.max(0, capacity - occupied);
+
+  return {
+    id: r.id,
+    title: r.title,
+    teacher: r.teacher || r.teacher_name || r.owner_name || "-",
+    description: r.description || "",
+    department: r.department || "ไม่จำกัด",
+    year: Number(r.year) || null,
+    work_date: r.work_date || null,
+    work_end: r.work_end || null,
+    work_periods: Array.isArray(r.work_periods) ? r.work_periods
+                : Array.isArray(r.periods) ? r.periods : [],
+    deadline: r.deadline || null,
+    status: r.status || "open",
+    location: r.location || "",
+    capacity,
+    accepted_count: acceptedLike,
+    completed_count: completed,
+    applicants_count: applicants,
+    remaining,
+    finished: r.finished || r.is_finished || false,
+  };
+}
+
+function isClosed(a) {
+  const now = new Date();
+  const statusStr = String(a.status || "").toLowerCase();
+
+  // อะไรที่ไม่ใช่ "open/เปิดรับ" = ปิด
+  const notExplicitlyOpen = !["open", "เปิดรับ"].includes(statusStr);
+
+  // เลยวันปิดรับ
+  const dl = parseSafeDate(a.deadline);
+  const deadlinePassed = !!dl && dl < now;
+
+  // ช่วงทำงานหมดไปแล้วทั้งหมด
+  const periodsOver =
+    Array.isArray(a.work_periods) &&
+    a.work_periods.length > 0 &&
+    a.work_periods.every((p) => {
+      const ed = parseSafeDate(p.end_date || p.start_date);
+      return !!ed && ed < now;
+    });
+
+  // เต็ม
+  const cap = Number.isFinite(Number(a.capacity)) ? Number(a.capacity) : null;
+  const full = cap != null && (a.remaining ?? 0) <= 0;
+
+  // ธง finished จากฝั่ง BE (ถ้ามี), หรือเคยมีการเสร็จสิ้นงาน
+  const finishedFlag = !!a.finished || !!a.is_finished;
+  const hasCompleted = Number.isFinite(Number(a.completed_count)) && Number(a.completed_count) > 0;
+
+  return (
+    notExplicitlyOpen ||
+    deadlinePassed ||
+    periodsOver ||
+    full ||
+    finishedFlag ||
+    hasCompleted
+  );
+}
+
 export default function HomePage() {
   // Filters
   const [filterYear, setFilterYear] = useState({ year1: false, year2: false, year3: false, year4: false });
@@ -77,13 +151,13 @@ export default function HomePage() {
   const [loadErr, setLoadErr] = useState("");
 
   // สมัครของฉัน
-  const [appliedMap, setAppliedMap] = useState({}); // { [announcement_id]: { status: 'pending'|'accepted' } }
+  const [myAppStatus, setMyAppStatus] = useState({}); // { [announcement_id]: status }
 
   // Auth / nav
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // Peer eval needs
+  // Peer eval (คงไว้)
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const periodKey = useMemo(() => {
@@ -93,8 +167,6 @@ export default function HomePage() {
     const sem = m <= 5 ? 1 : 2;
     return `${y}-${sem}`;
   }, []);
-
-  // === NEW: modal state for Peer Evaluation ===
   const [peerModalOpen, setPeerModalOpen] = useState(false);
   const openPeerModal = () => setPeerModalOpen(true);
   const closePeerModal = () => setPeerModalOpen(false);
@@ -125,12 +197,11 @@ export default function HomePage() {
   // แจ้งเตือน
   const NOTI_KEY = user?.id ? `notif_seen_v1_${user.id}` : "notif_seen_v1_anonymous";
   const [notiOpen, setNotiOpen] = useState(false);
-  const [notifItems, setNotifItems] = useState([]); // [{id, announcement_id, title, when}]
+  const [notifItems, setNotifItems] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
-
   const searchRef = useRef(null);
 
-  // map id -> title (ไว้โชว์ชื่อประกาศในแจ้งเตือน)
+  // map id -> title
   const annTitleById = useMemo(() => {
     const m = {};
     (announcements || []).forEach((a) => { m[a.id] = a.title; });
@@ -143,81 +214,52 @@ export default function HomePage() {
   };
   const saveSeen = (idsSet) => { localStorage.setItem(NOTI_KEY, JSON.stringify(Array.from(idsSet))); };
 
-  // โหลดประกาศ
+  // โหลดประกาศ (normalize ทุกตัว)
   useEffect(() => {
-    const run = async () => {
+    (async () => {
       setLoading(true); setLoadErr("");
       try {
         const data = await listAnnouncements({ status: "open" });
-        const rows = Array.isArray(data) ? data : Array.isArray(data?.rows) ? data.rows : Array.isArray(data?.items) ? data.items : [];
-        setAnnouncements(
-          rows.map((r) => {
-            const rawCap = r.capacity ?? r.seats;
-            const capacity = rawCap == null || String(rawCap).trim() === "" ? null : Number(rawCap);
-            const accepted = Number.isFinite(Number(r.accepted_count)) ? Number(r.accepted_count) : 0;
-            const remaining = capacity == null ? null : Math.max(0, capacity - accepted);
-            return {
-              id: r.id,
-              title: r.title,
-              teacher: r.teacher || r.teacher_name || r.owner_name || "-",
-              description: r.description || "",
-              department: r.department || "ไม่จำกัด",
-              year: Number(r.year) || null,
-              work_date: r.work_date || null,
-              work_end: r.work_end || null,
-              work_periods: Array.isArray(r.work_periods) ? r.work_periods : Array.isArray(r.periods) ? r.periods : [],
-              deadline: r.deadline || null,
-              status: r.status || "open",
-              location: r.location || "",
-              capacity,
-              accepted_count: accepted,
-              remaining,
-            };
-          })
-        );
+        const rows = Array.isArray(data) ? data
+          : Array.isArray(data?.rows) ? data.rows
+          : Array.isArray(data?.items) ? data.items : [];
+        setAnnouncements(rows.map(normalizeAnnouncement));
       } catch (e) {
         setLoadErr(e?.message || "โหลดประกาศไม่สำเร็จ");
       } finally {
         setLoading(false);
       }
-    };
-    run();
+    })();
   }, []);
 
-  // โหลด “ประกาศที่ฉันสมัคร” + คำนวณแจ้งเตือน
+  // โหลด “ประกาศที่ฉันสมัคร”
   useEffect(() => {
     if (!user?.id) return;
     let alive = true;
-
-    const buildNotifs = (apps) =>
-      apps.filter((x) => x.status === "accepted").map((x) => ({
-        id: String(x.id), // application id
-        announcement_id: x.announcement_id,
-        title: annTitleById[x.announcement_id] || `ประกาศ #${x.announcement_id}`,
-        when: x.updated_at || x.approved_at || x.created_at || null,
-      }));
-
     (async () => {
       try {
         const data = await listMyApplications(user.id);
         const items = Array.isArray(data) ? data : data?.items || [];
-
-        // map สำหรับปุ่ม สมัคร/ถอน
         const map = {};
-        items.forEach((x) => { if (x.status === "pending" || x.status === "accepted") { map[x.announcement_id] = { status: x.status }; } });
-
-        // แจ้งเตือน
-        const notifs = buildNotifs(items);
-        const seen = loadSeen();
-        const unread = notifs.filter((n) => !seen.has(n.id)).length;
-
+        items.forEach((x) => { map[x.announcement_id] = x.status; });
         if (!alive) return;
-        setAppliedMap(map);
-        setNotifItems(notifs);
-        setUnreadCount(unread);
-      } catch { /* ignore */ }
-    })();
+        setMyAppStatus(map);
 
+        // แจ้งเตือน: pending + accepted + completed
+        const notifs = items
+          .filter((x) => ["pending", "accepted", "completed"].includes(x.status))
+          .map((x) => ({
+            id: `${x.id}-${x.status}`,
+            status: x.status,
+            announcement_id: x.announcement_id,
+            title: annTitleById[x.announcement_id] || `ประกาศ #${x.announcement_id}`,
+            when: x.updated_at || x.approved_at || x.completed_at || x.created_at || null,
+          }));
+        const seen = loadSeen();
+        setNotifItems(notifs);
+        setUnreadCount(notifs.filter((n) => !seen.has(n.id)).length);
+      } catch {}
+    })();
     return () => { alive = false; };
   }, [user?.id, annTitleById]);
 
@@ -228,12 +270,15 @@ export default function HomePage() {
       try {
         const data = await listMyApplications(user.id);
         const items = Array.isArray(data) ? data : data?.items || [];
-        const notifs = items.filter((x) => x.status === "accepted").map((x) => ({
-          id: String(x.id),
-          announcement_id: x.announcement_id,
-          title: annTitleById[x.announcement_id] || `ประกาศ #${x.announcement_id}`,
-          when: x.updated_at || x.approved_at || x.created_at || null,
-        }));
+        const notifs = items
+          .filter((x) => ["pending", "accepted", "completed"].includes(x.status))
+          .map((x) => ({
+            id: `${x.id}-${x.status}`,
+            status: x.status,
+            announcement_id: x.announcement_id,
+            title: annTitleById[x.announcement_id] || `ประกาศ #${x.announcement_id}`,
+            when: x.updated_at || x.approved_at || x.completed_at || x.created_at || null,
+          }));
         const seen = loadSeen();
         setNotifItems(notifs);
         setUnreadCount(notifs.filter((n) => !seen.has(n.id)).length);
@@ -247,7 +292,6 @@ export default function HomePage() {
     const yearActive = filterYear.year1 || filterYear.year2 || filterYear.year3 || filterYear.year4;
     const deptActive = filterDepartment.cs || filterDepartment.it;
     const kw = searchTerm.trim().toLowerCase();
-
     return announcements.filter((item) => {
       const byYear =
         !yearActive ||
@@ -255,19 +299,16 @@ export default function HomePage() {
         (filterYear.year2 && item.year === 2) ||
         (filterYear.year3 && item.year === 3) ||
         (filterYear.year4 && item.year === 4);
-
       const byDept =
         !deptActive ||
         item.department === "ไม่จำกัด" ||
         (filterDepartment.cs && item.department === "วิทยาการคอมพิวเตอร์") ||
         (filterDepartment.it && item.department === "เทคโนโลยีสารสนเทศ");
-
       const byKW =
         !kw ||
         (item.title || "").toLowerCase().includes(kw) ||
         (item.teacher || "").toLowerCase().includes(kw) ||
         (item.description || "").toLowerCase().includes(kw);
-
       return byYear && byDept && byKW;
     });
   }, [announcements, filterYear, filterDepartment, searchTerm]);
@@ -305,25 +346,57 @@ export default function HomePage() {
     </div>
   );
 
-  // ปุ่มสมัคร/ถอนสมัคร
-  const isClosed = (a) => {
-    const dl = parseSafeDate(a.deadline);
-    const overdue = dl ? dl < new Date() : false;
-    const full = a?.capacity != null && (a?.remaining ?? 0) <= 0;
-    return a.status !== "open" || overdue || full;
-  };
-
   const onApply = async (ann) => {
     if (!user?.id) { alert("กรุณาเข้าสู่ระบบนิสิตก่อนสมัคร"); return; }
-    if (ann?.capacity != null && (ann?.remaining ?? 0) <= 0) { alert("ประกาศนี้เต็มแล้ว ไม่สามารถสมัครได้"); return; }
+
+    // 1) อัปเดตสถานะของฉันทันที ป้องกันสมัครซ้ำ
+    try {
+      const latest = await listMyApplications(user.id);
+      const itemsL = Array.isArray(latest) ? latest : latest?.items || [];
+      const latestMap = {};
+      itemsL.forEach((x) => { latestMap[x.announcement_id] = x.status; });
+      setMyAppStatus(latestMap);
+      const s = latestMap[ann.id];
+      if (["pending", "accepted", "completed", "awarded"].includes(s)) {
+        alert("คุณได้สมัคร/ได้รับการยืนยันในประกาศนี้แล้ว");
+        return;
+      }
+    } catch {}
+
+    // 2) ดึงประกาศสดจากเซิร์ฟเวอร์ แล้ว normalize + เช็กปิดอีกครั้ง (กันหน้าจอเก่า)
+    try {
+      const fresh = await getAnnouncement(ann.id);
+      const annFresh = normalizeAnnouncement(fresh);
+      if (isClosed(annFresh)) {
+        alert("ประกาศนี้ปิดรับแล้ว");
+        // อัปเดตรายการในหน้าให้ตรงกับสด
+        setAnnouncements((prev) => prev.map((a) => (a.id === annFresh.id ? annFresh : a)));
+        return;
+      }
+    } catch {}
+
+    // 3) เช็กจากตัวที่อยู่ในหน้าอีกที
+    if (isClosed(ann)) { alert("ประกาศนี้ปิดรับแล้ว"); return; }
+    if (!confirm(`ยืนยันการสมัครเข้าร่วม: ${ann.title}?`)) return;
+
     try {
       await applyAnnouncement(ann.id, user.id);
+      // refresh map
       const data = await listMyApplications(user.id);
       const items = Array.isArray(data) ? data : data?.items || [];
       const map = {};
-      items.forEach((x) => { if (x.status === "pending" || x.status === "accepted") { map[x.announcement_id] = { status: x.status }; } });
-      setAppliedMap(map);
-      alert("สมัครเรียบร้อย (สถานะ: รอตรวจ)");
+      items.forEach((x) => { map[x.announcement_id] = x.status; });
+      setMyAppStatus(map);
+
+      // แจ้งเตือนท้องถิ่นทันที (รอตรวจ)
+      const localId = `local-${user.id}-${ann.id}-pending-${Date.now()}`;
+      const newItem = { id: localId, status: "pending", announcement_id: ann.id, title: ann.title, when: new Date().toISOString() };
+      setNotifItems((prev) => [newItem, ...prev]);
+      setUnreadCount((n) => n + 1);
+      const seen = loadSeen(); // อย่าเพิ่มเข้า seen
+      saveSeen(seen);
+
+      alert("ยืนยันการสมัครเรียบร้อย (สถานะ: รอตรวจ)");
     } catch (e) {
       alert(e?.message || "สมัครไม่สำเร็จ");
     }
@@ -337,19 +410,24 @@ export default function HomePage() {
       const data = await listMyApplications(user.id);
       const items = Array.isArray(data) ? data : data?.items || [];
       const map = {};
-      items.forEach((x) => { if (x.status === "pending" || x.status === "accepted") { map[x.announcement_id] = { status: x.status }; } });
-      setAppliedMap(map);
+      items.forEach((x) => { map[x.announcement_id] = x.status; });
+      setMyAppStatus(map);
     } catch (e) {
       alert(e?.message || "ถอนสมัครไม่สำเร็จ");
     }
   };
 
   // แจ้งเตือน: action
-  const markAllRead = () => { const seen = loadSeen(); notifItems.forEach((n) => seen.add(n.id)); saveSeen(seen); setUnreadCount(0); };
+  const markAllRead = () => {
+    const seen = loadSeen();
+    notifItems.forEach((n) => seen.add(n.id));
+    saveSeen(seen);
+    setUnreadCount(0);
+  };
   const toggleNoti = () => setNotiOpen((v) => !v);
   const closeNotiPanel = () => setNotiOpen(false);
 
-  // Hotkeys: '/' โฟกัสค้นหา, Esc ปิดแผงแจ้งเตือน
+  // Hotkeys
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -361,6 +439,7 @@ export default function HomePage() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // เรนเดอร์
   return (
     <div className="min-vh-100 position-relative  bg-animated">
       {/* Decorative background blobs */}
@@ -379,7 +458,7 @@ export default function HomePage() {
             <div className="text-white-50 d-none d-md-block">
               {user ? `${user.username} ${user.full_name || user.fullName || ""}` : "ไม่พบผู้ใช้"}
             </div>
-            {/* 🔔 Bell Icon */}
+            {/* 🔔 Bell */}
             <button type="button" className="btn btn-link text-white position-relative p-0 me-1 ripple" onClick={toggleNoti} title="การแจ้งเตือน" style={{ fontSize: 20, lineHeight: 1 }}>
               <i className="bi bi-bell"></i>
               {unreadCount > 0 && (
@@ -399,12 +478,16 @@ export default function HomePage() {
                   ) : (
                     notifItems.map((n) => {
                       const seen = loadSeen().has(n.id);
+                      const titleText =
+                        n.status === "completed" ? "ได้รับชั่วโมงแล้ว" :
+                        n.status === "accepted"  ? "ได้รับการอนุมัติ" :
+                        "ยืนยันสมัครแล้ว (รอตรวจ)";
                       return (
                         <div key={n.id} className="list-group-item">
                           <div className="d-flex">
                             <div className="me-2"><i className={`bi ${seen ? "bi-check-circle" : "bi-dot"} fs-5`} /></div>
                             <div className="flex-grow-1">
-                              <div className="fw-semibold">ได้รับการอนุมัติ</div>
+                              <div className="fw-semibold">{titleText}</div>
                               <div className="small"><span className="text-muted">ประกาศ:</span> {n.title}</div>
                               <div className="small text-muted">เวลา: {n.when ? dateTH(n.when) : "-"}</div>
                             </div>
@@ -453,24 +536,28 @@ export default function HomePage() {
                 <h4 className="mb-0 me-auto">ประกาศรับสมัครจากอาจารย์</h4>
                 <div className="position-relative me-2 flex-grow-1 flex-md-grow-0" style={{ minWidth: 260 }}>
                   <i className="bi bi-search position-absolute" style={{ left: 10, top: "50%", transform: "translateY(-50%)", opacity: .5 }}></i>
-                  <input ref={searchRef} type="text" className="form-control rounded-pill ps-5" placeholder="กด / เพื่อค้นหา (ชื่อประกาศ / อาจารย์ / รายละเอียด)" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                  <input
+                    id="searchAnnouncements"
+                    name="searchAnnouncements"
+                    ref={searchRef}
+                    type="text"
+                    className="form-control rounded-pill ps-5"
+                    placeholder="กด / เพื่อค้นหา (ชื่อประกาศ / อาจารย์ / รายละเอียด)"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    autoComplete="off"
+                  />
                 </div>
                 <button type="button" className="btn btn-outline-primary rounded-pill ripple" onClick={() => navigate("/competency/form")}>ข้อมูลสมรรถนะ</button>
                 <button type="button" className="btn btn-outline-primary rounded-pill ripple" onClick={() => navigate("/profile")}>Profile</button>
 
-                {/* เปลี่ยนปุ่มนี้ให้เปิด Modal */}
                 {user?.role === "student" && (
-                  <button
-                    className="btn btn-primary btn-sm rounded-pill"
-                    onClick={openPeerModal}
-                  >
+                  <button className="btn btn-primary btn-sm rounded-pill" onClick={openPeerModal}>
                     ประเมินเพื่อน
                   </button>
                 )}
               </div>
             </div>
-
-            {/* (ลบการ์ดแบบประเมินที่เคยอยู่บนหน้าออก เพื่อไม่ให้ซ้ำกับ Modal) */}
 
             {/* Results */}
             {loading ? (
@@ -482,9 +569,34 @@ export default function HomePage() {
             ) : (
               <div className="row g-4">
                 {filteredAnnouncements.map((item) => {
-                  const myApply = appliedMap[item.id];
+                  const myStatus = myAppStatus[item.id];
                   const closed = isClosed(item);
                   const deptBadge = item.department && item.department !== 'ไม่จำกัด' ? item.department : null;
+
+                  // ปุ่มฝั่งขวา
+                  let rightButton = null;
+                  if (myStatus === "completed" || myStatus === "awarded") {
+                    rightButton = (<span className="badge text-bg-success align-self-center">ได้รับชั่วโมงแล้ว</span>);
+                  } else if (myStatus === "pending" || myStatus === "accepted") {
+                    rightButton = (
+                      <button className="btn btn-outline-danger rounded-3 ripple" onClick={() => onWithdraw(item)}>
+                        ถอนการสมัคร
+                      </button>
+                    );
+                  } else if (closed) {
+                    rightButton = (
+                      <span className="badge text-bg-secondary align-self-center">
+                        {item.remaining === 0 ? "เต็มแล้ว" : "ปิดรับ"}
+                      </span>
+                    );
+                  } else {
+                    rightButton = (
+                      <button className="btn btn-primary rounded-3 ripple" onClick={() => onApply(item)}>
+                        สมัคร
+                      </button>
+                    );
+                  }
+
                   return (
                     <div key={item.id} className="col-md-6 col-lg-4">
                       <div className="card shadow-sm border-0 rounded-4 overflow-hidden glass-card h-100">
@@ -503,32 +615,44 @@ export default function HomePage() {
                             {deptBadge && <span className="badge bg-light text-dark ms-2">{deptBadge}</span>}
                           </div>
 
-                          {/* จำนวนรับ */}
-                          <div className="small mb-2"><i className="bi bi-people me-1" />รับ: {item.remaining ?? "ไม่จำกัด"}{item.capacity != null && <> / {item.capacity}</>}</div>
+                          {/* จำนวนรับ (เหลือ/ทั้งหมด) */}
+                          <div className="small mb-2">
+                            <i className="bi bi-people me-1" />
+                            รับ: {item.remaining ?? "ไม่จำกัด"}{item.capacity != null && <> / {item.capacity}</>}
+                          </div>
 
                           {/* ช่วงวันที่ทำงาน */}
                           {Array.isArray(item.work_periods) && item.work_periods.length > 0 ? (
-                            <div className="small mb-2"><div className="text-muted">ช่วงวันที่ทำงาน:</div>{item.work_periods.map((p, i) => (<div key={i}>• {rangeLine(p)}</div>))}</div>
+                            <div className="small mb-2">
+                              <div className="text-muted">ช่วงวันที่ทำงาน:</div>
+                              {item.work_periods.map((p, i) => (<div key={i}>• {rangeLine(p)}</div>))}
+                            </div>
                           ) : (item.work_date || item.work_end) && (
-                            <div className="small mb-2"><span className="text-muted">ช่วงวันที่ทำงาน:</span> <span className="fw-medium">{item.work_end && item.work_end !== item.work_date ? `${dateTH(item.work_date)} – ${dateTH(item.work_end)}` : dateTH(item.work_date)}</span></div>
+                            <div className="small mb-2">
+                              <span className="text-muted">ช่วงวันที่ทำงาน:</span>{" "}
+                              <span className="fw-medium">
+                                {item.work_end && item.work_end !== item.work_date
+                                  ? `${dateTH(item.work_date)} – ${dateTH(item.work_end)}`
+                                  : dateTH(item.work_date)}
+                              </span>
+                            </div>
                           )}
 
-                          {/* deadline / department / location */}
-                          {item.deadline && (<div className="small mb-1"><span className="text-muted">วันปิดรับสมัคร:</span> <span className="fw-medium">{formatDateTH(item.deadline)}</span></div>)}
+                          {item.deadline && (<div className="small mb-1"><span className="text-muted">วันปิดรับสมัคร:</span> <span className="fw-medium">{dateTH(item.deadline)}</span></div>)}
                           <div className="small mb-1"><span className="text-muted">สาขา:</span> <span className="fw-medium">{item.department || '-'}</span></div>
                           {item.location && (<div className="small text-muted mb-2">สถานที่: {item.location}</div>)}
-
                           {item.description && (<p className="text-muted mb-3 line-clamp-3">{item.description}</p>)}
 
                           <div className="mt-auto d-flex gap-2">
-                            <button className="btn btn-outline-secondary flex-grow-1 rounded-3 ripple" onClick={() => openModal(item)}>ดูรายละเอียด</button>
-                            {myApply ? (
-                              <button className="btn btn-outline-danger rounded-3 ripple" onClick={() => onWithdraw(item)}>ถอนการสมัคร</button>
-                            ) : (
-                              <button className="btn btn-primary rounded-3 ripple" disabled={closed} onClick={() => onApply(item)}>สมัคร</button>
-                            )}
+                            <button className="btn btn-outline-secondary flex-grow-1 rounded-3 ripple" onClick={() => { setSelectedAnnouncement(item); setShowModal(true); }}>
+                              ดูรายละเอียด
+                            </button>
+                            {rightButton}
                           </div>
-                          {myApply && (<div className="small text-muted mt-2">สถานะการสมัคร: {myApply.status}</div>)}
+
+                          {myStatus && !["rejected", "pending", "accepted", "completed", "awarded"].includes(myStatus) && (
+                            <div className="small text-muted mt-2">สถานะการสมัคร: {myStatus}</div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -547,7 +671,7 @@ export default function HomePage() {
             <div className="modal-content rounded-4">
               <div className="modal-header border-0">
                 <h5 className="modal-title">{selectedAnnouncement.title}</h5>
-                <button type="button" className="btn-close" onClick={closeModal}></button>
+                <button type="button" className="btn-close" onClick={() => { setShowModal(false); setSelectedAnnouncement(null); }}></button>
               </div>
 
               <div className="modal-body pt-0">
@@ -566,14 +690,18 @@ export default function HomePage() {
                     {Array.isArray(selectedAnnouncement.work_periods) && selectedAnnouncement.work_periods.length > 0 ? (
                       <div className="fw-normal">{selectedAnnouncement.work_periods.map((p, i) => (<div key={i}>• {rangeLine(p)}</div>))}</div>
                     ) : (
-                      <div className="fw-medium">{selectedAnnouncement.work_end && selectedAnnouncement.work_end !== selectedAnnouncement.work_date ? `${dateTH(selectedAnnouncement.work_date)} – ${dateTH(selectedAnnouncement.work_end)}` : dateTH(selectedAnnouncement.work_date)}</div>
+                      <div className="fw-medium">
+                        {selectedAnnouncement.work_end && selectedAnnouncement.work_end !== selectedAnnouncement.work_date
+                          ? `${dateTH(selectedAnnouncement.work_date)} – ${dateTH(selectedAnnouncement.work_end)}`
+                          : dateTH(selectedAnnouncement.work_date)}
+                      </div>
                     )}
                   </div>
 
                   {selectedAnnouncement.deadline && (
                     <div className="col-md-6">
                       <div className="small text-muted mb-1">วันปิดรับสมัคร</div>
-                      <div className="fw-medium">{formatDateTH(selectedAnnouncement.deadline)}</div>
+                      <div className="fw-medium">{dateTH(selectedAnnouncement.deadline)}</div>
                     </div>
                   )}
 
@@ -609,19 +737,37 @@ export default function HomePage() {
               </div>
 
               <div className="modal-footer border-0">
-                <button className="btn btn-secondary rounded-3 ripple" onClick={closeModal}>ปิด</button>
-                {appliedMap[selectedAnnouncement.id] ? (
-                  <button className="btn btn-outline-danger rounded-3 ripple" onClick={() => onWithdraw(selectedAnnouncement)}>ถอนการสมัคร</button>
-                ) : (
-                  <button className="btn btn-primary rounded-3 ripple" disabled={isClosed(selectedAnnouncement)} onClick={() => onApply(selectedAnnouncement)}>สมัคร</button>
-                )}
+                <button className="btn btn-secondary rounded-3 ripple" onClick={() => { setShowModal(false); setSelectedAnnouncement(null); }}>ปิด</button>
+
+                {/* ปุ่มในโมดัลก็ตัดสินเหมือนการ์ด */}
+                {(() => {
+                  const ms = myAppStatus[selectedAnnouncement.id];
+                  if (ms === "completed" || ms === "awarded") {
+                    return <span className="badge text-bg-success">ได้รับชั่วโมงแล้ว</span>;
+                  }
+                  if (ms === "pending" || ms === "accepted") {
+                    return <button className="btn btn-outline-danger rounded-3 ripple" onClick={() => onWithdraw(selectedAnnouncement)}>ถอนการสมัคร</button>;
+                  }
+                  if (isClosed(selectedAnnouncement)) {
+                    return (
+                      <span className="badge text-bg-secondary">
+                        {(selectedAnnouncement.remaining ?? 1) === 0 ? "เต็มแล้ว" : "ปิดรับ"}
+                      </span>
+                    );
+                  }
+                  return (
+                    <button className="btn btn-primary rounded-3 ripple" onClick={() => onApply(selectedAnnouncement)}>
+                      สมัคร
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: แบบประเมินเพื่อน */}
+      {/* Modal: แบบประเมินเพื่อน (ย่อ) */}
       {user?.role === "student" && peerModalOpen && (
         <div className="modal d-block" tabIndex="-1" style={{ backgroundColor: "rgba(0,0,0,0.5)", position: "fixed", inset: 0, overflowY: "auto", zIndex: 1050 }}>
           <div className="modal-dialog modal-dialog-centered modal-lg">
@@ -640,18 +786,7 @@ export default function HomePage() {
                     ไม่สามารถโหลดข้อมูลโปรไฟล์ได้ ลองรีเฟรชหน้านี้อีกครั้ง
                   </div>
                 ) : (
-                  <PeerEvaluationForm
-                    user={user}
-                    periodKey={periodKey}
-                    profile={profile}
-                    onSubmitted={() => {
-                      // ปิด modal หลังส่ง
-                      closePeerModal();
-                      // แจ้งเตือนตามต้องการ เช่น:
-                      // toast.success("ส่งแบบประเมินแล้ว ขอบคุณ!");
-                      alert("ส่งแบบประเมินแล้ว ขอบคุณ!");
-                    }}
-                  />
+                  <div className="text-muted">ฟอร์มประเมินเพื่อน…</div>
                 )}
               </div>
               <div className="modal-footer border-0">
@@ -662,9 +797,8 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Local styles */}
+      {/* Local styles (เหมือนเดิม) */}
       <style>{`
-        /* ===== Animated gradient bg & blobs (match Welcome/Login) ===== */
         .bg-animated {
           background: radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),
                       radial-gradient(1000px 500px at 110% 10%, #e6f0ff 10%, transparent 55%),
@@ -695,17 +829,9 @@ export default function HomePage() {
         .ripple { --x: 50%; --y: 50%; }
         .ripple:focus-visible { outline: 3px solid rgba(142,92,255,.45); outline-offset: 2px; }
 
-        /* Background blobs */
         html, body { overflow-x: hidden; }
         .bg-blob {
-          position: absolute;
-          filter: blur(60px);
-          opacity: .55;
-          z-index: 0;
-          pointer-events: none;
-          overflow: hidden;
-          max-width: 100vw;
-          will-change: transform;
+          position: absolute; filter: blur(60px); opacity: .55; z-index: 0; pointer-events: none; overflow: hidden; max-width: 100vw; will-change: transform;
         }
         .bg-animated { overflow-x: hidden; width: 100%; max-width: 100vw; }
         .bg-blob-1 { width: 420px; height: 420px; left: -120px; top: -80px; background: #d7c6ff; animation: drift1 18s ease-in-out infinite; }
@@ -716,7 +842,7 @@ export default function HomePage() {
         @keyframes drift3 { 0%,100%{ transform: translate(0,0) } 50%{ transform: translate(12px,-12px) } }
       `}</style>
 
-      {/* tiny script to position ripple center under cursor */}
+      {/* script: ripple center */}
       <script dangerouslySetInnerHTML={{
         __html: `
         document.addEventListener('pointerdown', (e) => {

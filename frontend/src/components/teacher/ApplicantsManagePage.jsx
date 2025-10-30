@@ -1,25 +1,30 @@
-// src/pages/ApplicantsManagePage.jsx — refined UI (with Swal + capacity guard + completed)
+// src/pages/ApplicantsManagePage.jsx — ปุ่ม "เสร็จสิ้นงาน" + สถานะโชว์ "ได้รับชั่วโมงแล้ว" + โควต้า = accepted+completed
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getAnnouncement, listApplicants, changeApplicationStatus } from "../../services/announcementsApi";
 import Swal from "sweetalert2";
 
-const StatusBadge = ({ status }) => {
-  const cls =
-    status === "accepted"
-      ? "badge text-bg-success"
-      : status === "rejected"
-        ? "badge text-bg-danger"
-        : status === "completed"
-          ? "badge text-bg-info"
-          : "badge text-bg-secondary";
-  const label =
-    status === "accepted" ? "อนุมัติแล้ว"
-    : status === "rejected" ? "ปฏิเสธแล้ว"
-    : status === "completed" ? "เสร็จสิ้น"
-    : "รอดำเนินการ";
-  return <span className={cls}>{label}</span>;
+/* === คำที่ใช้แสดงสำหรับสถานะ === */
+const COMPLETED_STATUS_TEXT = "ได้รับชั่วโมงแล้ว";
+
+const STATUS_LABEL = {
+  pending:   "รอดำเนินการ",
+  accepted:  "อนุมัติแล้ว",
+  rejected:  "ปฏิเสธแล้ว",
+  completed: COMPLETED_STATUS_TEXT, // ✅ เปลี่ยน label ของ completed
 };
+const STATUS_CLASS = {
+  pending:  "badge text-bg-secondary",
+  accepted: "badge text-bg-success",
+  rejected: "badge text-bg-danger",
+  completed:"badge text-bg-info",
+};
+
+const StatusBadge = ({ status }) => (
+  <span className={STATUS_CLASS[status] || "badge text-bg-secondary"}>
+    {STATUS_LABEL[status] || status}
+  </span>
+);
 
 const Chip = ({ active, onClick, children }) => (
   <button
@@ -71,10 +76,16 @@ export default function ApplicantsManagePage() {
     })();
   }, [id]);
 
-  const acceptedCount = useMemo(() => rows.filter((r) => r.status === "accepted").length, [rows]);
-  const pendingCount = useMemo(() => rows.filter((r) => r.status === "pending").length, [rows]);
-  const rejectedCount = useMemo(() => rows.filter((r) => r.status === "rejected").length, [rows]);
+  const acceptedCount  = useMemo(() => rows.filter((r) => r.status === "accepted").length,  [rows]);
+  const pendingCount   = useMemo(() => rows.filter((r) => r.status === "pending").length,   [rows]);
+  const rejectedCount  = useMemo(() => rows.filter((r) => r.status === "rejected").length,  [rows]);
   const completedCount = useMemo(() => rows.filter((r) => r.status === "completed").length, [rows]);
+
+  // ✅ โควต้าที่นั่งที่ถูกใช้จริง = accepted + completed (กันอนุมัติเกิน)
+  const occupiedCount  = useMemo(
+    () => rows.filter((r) => r.status === "accepted" || r.status === "completed").length,
+    [rows]
+  );
 
   const filtered = useMemo(() => {
     const kw = searchDebounced.toLowerCase();
@@ -83,18 +94,18 @@ export default function ApplicantsManagePage() {
         !kw ||
         String(r.username || "").toLowerCase().includes(kw) ||
         String(r.full_name || "").toLowerCase().includes(kw) ||
-        String(r.status || "").toLowerCase().includes(kw);
+        String(STATUS_LABEL[r.status] || r.status || "").toLowerCase().includes(kw); // ค้นหาคำไทยได้
       const byStatus = statusFilter === "all" ? true : r.status === statusFilter;
       return byKW && byStatus;
     });
   }, [rows, searchDebounced, statusFilter]);
 
   const capacity = ann?.capacity ?? null;
-  const remaining = ann?.remaining ?? (capacity != null ? Math.max(0, capacity - acceptedCount) : null);
+  const remaining = ann?.remaining ?? (capacity != null ? Math.max(0, capacity - occupiedCount) : null);
   const progressPct =
-    capacity != null && capacity > 0 ? Math.min(100, Math.round((acceptedCount / capacity) * 100)) : null;
+    capacity != null && capacity > 0 ? Math.min(100, Math.round((occupiedCount / capacity) * 100)) : null;
 
-  const canAcceptMore = capacity == null || acceptedCount < capacity;
+  const canAcceptMore = capacity == null || occupiedCount < capacity;
 
   const progressColor = (() => {
     if (progressPct == null) return "bg-secondary";
@@ -109,17 +120,17 @@ export default function ApplicantsManagePage() {
       await Swal.fire("ที่นั่งเต็ม", "ไม่สามารถอนุมัติเพิ่มได้เพราะครบจำนวนแล้ว", "warning");
       return;
     }
-    // guard: ทำเสร็จสิ้นได้เฉพาะรายการที่อนุมัติแล้ว
+    // guard: ทำ “ได้รับชั่วโมงแล้ว” ได้เฉพาะรายการที่อนุมัติแล้ว
     if (action === "complete" && app.status !== "accepted") {
-      await Swal.fire("ยังไม่อนุมัติ", "สามารถบันทึกเป็นเสร็จสิ้นได้หลังจากอนุมัติแล้วเท่านั้น", "info");
+      await Swal.fire("ยังไม่อนุมัติ", `สามารถบันทึกเป็น “${COMPLETED_STATUS_TEXT}” ได้หลังจากอนุมัติแล้วเท่านั้น`, "info");
       return;
     }
 
     const verb =
-      action === "accept" ? "อนุมัติ"
-      : action === "reject" ? "ปฏิเสธ"
-      : action === "complete" ? "บันทึกเสร็จสิ้น"
-      : "ดำเนินการ";
+      action === "accept"   ? "อนุมัติ"
+    : action === "reject"   ? "ปฏิเสธ"
+    : action === "complete" ? `บันทึก ‘${COMPLETED_STATUS_TEXT}’`
+                            : "ดำเนินการ";
 
     const result = await Swal.fire({
       title: `ยืนยัน${verb}?`,
@@ -137,7 +148,14 @@ export default function ApplicantsManagePage() {
 
     try {
       setActingId(app.id);
-      await changeApplicationStatus(id, app.id, action); // ต้องรองรับ action: "complete" ฝั่ง backend
+      const annId = parseInt(id, 10);
+      const appId = parseInt(app.id, 10);
+      if (isNaN(annId) || isNaN(appId)) {
+        await Swal.fire("ข้อมูลไม่ถูกต้อง", "รหัสประกาศหรือรหัสผู้สมัครไม่ถูกต้อง", "error");
+        return;
+      }
+
+      await changeApplicationStatus(annId, appId, action);
       setLiveMsg(`${verb}เรียบร้อย: ${app.full_name}`);
       await refreshAll(); // refresh ทั้งหัว/ตาราง (อัปเดต remaining/progress)
       await Swal.fire("สำเร็จ", `${verb}ผู้สมัครเรียบร้อย`, "success");
@@ -155,6 +173,7 @@ export default function ApplicantsManagePage() {
       <div className="bg-blob bg-blob-1" aria-hidden="true" />
       <div className="bg-blob bg-blob-2" aria-hidden="true" />
       <div className="bg-blob bg-blob-3" aria-hidden="true" />
+
       {/* Top Bar – ให้เหมือนทุกหน้า */}
       <div className="hero-bar topbar glassy" style={{ height: 72 }}>
         <div className="container-xxl d-flex align-items-center h-100">
@@ -196,12 +215,12 @@ export default function ApplicantsManagePage() {
                     aria-valuemin="0"
                     aria-valuemax="100"
                     style={{ height: 10 }}
-                    aria-label="ความคืบหน้าการอนุมัติ"
+                    aria-label="ความคืบหน้าการใช้ที่นั่ง"
                   >
                     <div className={`progress-bar ${progressColor}`} style={{ width: `${progressPct}%` }} />
                   </div>
                   <div className="mt-1 small text-muted">
-                    อนุมัติแล้ว {acceptedCount} / {capacity} · เหลือ {remaining}
+                    ใช้แล้ว {occupiedCount} / {capacity} · เหลือ {remaining}
                   </div>
                 </>
               )}
@@ -226,7 +245,7 @@ export default function ApplicantsManagePage() {
                 อนุมัติแล้ว ({acceptedCount})
               </Chip>
               <Chip active={statusFilter === "completed"} onClick={() => setStatusFilter("completed")}>
-                เสร็จสิ้น ({completedCount})
+                {COMPLETED_STATUS_TEXT} ({completedCount})
               </Chip>
               <Chip active={statusFilter === "rejected"} onClick={() => setStatusFilter("rejected")}>
                 ปฏิเสธแล้ว ({rejectedCount})
@@ -254,7 +273,6 @@ export default function ApplicantsManagePage() {
         {loading ? (
           <div className="card border-0 shadow-sm rounded-4">
             <div className="card-body">
-              {/* skeleton rows */}
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="placeholder-wave mb-3">
                   <span className="placeholder col-3 me-2"></span>
@@ -285,7 +303,7 @@ export default function ApplicantsManagePage() {
                   <tr>
                     <th style={{ width: 160 }}>รหัสนิสิต</th>
                     <th>ชื่อ</th>
-                    <th style={{ width: 140 }}>สถานะ</th>
+                    <th style={{ width: 160 }}>สถานะ</th>
                     <th className="text-end" style={{ width: 360 }}>จัดการ</th>
                   </tr>
                 </thead>
@@ -302,13 +320,9 @@ export default function ApplicantsManagePage() {
                       <tr
                         key={r.id}
                         className={
-                          r.status === "accepted"
-                            ? "table-success-subtle"
-                            : r.status === "rejected"
-                              ? "table-danger-subtle"
-                              : r.status === "completed"
-                                ? "table-info-subtle"
-                                : ""
+                          r.status === "accepted"  ? "table-success-subtle" :
+                          r.status === "rejected"  ? "table-danger-subtle"  :
+                          r.status === "completed" ? "table-info-subtle"    : ""
                         }
                       >
                         <td className="fw-medium">{r.username}</td>
@@ -328,26 +342,22 @@ export default function ApplicantsManagePage() {
                                   <span className="spinner-border spinner-border-sm me-2" />
                                   กำลังอนุมัติ…
                                 </>
-                              ) : (
-                                "อนุมัติ"
-                              )}
+                              ) : ("อนุมัติ")}
                             </button>
 
                             <button
                               className="btn btn-outline-primary btn-sm"
                               disabled={disableComplete}
                               onClick={() => doAction(r, "complete")}
-                              title="บันทึกเป็นเสร็จสิ้น"
-                              aria-label={`เสร็จสิ้นงาน ${r.full_name}`}
+                              title={`บันทึกเป็น ‘${COMPLETED_STATUS_TEXT}’`}
+                              aria-label={`บันทึกเป็น ‘${COMPLETED_STATUS_TEXT}’ สำหรับ ${r.full_name}`}
                             >
                               {actingId === r.id ? (
                                 <>
                                   <span className="spinner-border spinner-border-sm me-2" />
                                   กำลังบันทึก…
                                 </>
-                              ) : (
-                                "เสร็จสิ้นงาน"
-                              )}
+                              ) : ("เสร็จสิ้นงาน")}
                             </button>
 
                             <button
@@ -361,9 +371,7 @@ export default function ApplicantsManagePage() {
                                   <span className="spinner-border spinner-border-sm me-2" />
                                   กำลังปฏิเสธ…
                                 </>
-                              ) : (
-                                "ปฏิเสธ"
-                              )}
+                              ) : ("ปฏิเสธ")}
                             </button>
                           </div>
                         </td>
@@ -408,7 +416,7 @@ export default function ApplicantsManagePage() {
         .ripple:after{content:"";position:absolute;inset:0;border-radius:inherit;opacity:0;background:radial-gradient(circle at var(--x,50%) var(--y,50%), rgba(255,255,255,.45), transparent 40%);transform:scale(.2);transition:transform .3s, opacity .45s;pointer-events:none;} 
         .ripple:active:after{opacity:1;transform:scale(1);transition:0s;} 
         .ripple{--x:50%;--y:50%;} 
-        .ripple:focus-visible{outline:3px solid rgba(142,92,255,.45);outline-offset:2px;}
+        .ripple:focus-visible{outline:3px solid rgba(142,92,255,.45);outlin e-offset:2px;}
 
         /* Blobs */
         .bg-blob{position:absolute;filter:blur(60px);opacity:.55;z-index:0;} 
@@ -421,8 +429,9 @@ export default function ApplicantsManagePage() {
       `}</style>
 
       {/* ripple positioning script */}
-      <script dangerouslySetInnerHTML={{
-        __html: `
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `
         document.addEventListener('pointerdown', (e) => {
           const el = e.target.closest('.ripple');
           if (!el) return;
@@ -430,7 +439,9 @@ export default function ApplicantsManagePage() {
           el.style.setProperty('--x', ((e.clientX - rect.left) / rect.width * 100).toFixed(2) + '%');
           el.style.setProperty('--y', ((e.clientY - rect.top) / rect.height * 100).toFixed(2) + '%');
         }, { passive: true });
-      `}} />
+      `,
+        }}
+      />
     </div>
   );
 }

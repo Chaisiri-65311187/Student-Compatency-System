@@ -65,7 +65,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
               />
               <Route
                 path="/create-announcement"
-                element={<PrivateRoute roles={['teacher', 'admin']} element={<EditAnnouncementPage mode="create" />} />}
+                element={<PrivateRoute roles={['teacher', 'admin']} element={<AddAnnouncementPage />} />}
               />
               <Route
                 path="/announcements/:id/applicants"

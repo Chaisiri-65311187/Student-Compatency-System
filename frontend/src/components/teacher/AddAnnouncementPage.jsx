@@ -1,4 +1,5 @@
-// src/components/AddAnnouncementPage.jsx — no-animation, clean UI
+// src/components/teacher/AddAnnouncementPage.jsx
+// — Add role_target & capacity, payload aligned, ใส่ id/name ให้ทุกฟิลด์ (แก้ warning)
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
@@ -44,9 +45,15 @@ const lineFromPeriod = (p) => {
   return `${date}${time}`;
 };
 
+/* ===== Static options ===== */
 const DEPTS = ["ไม่จำกัด", "วิทยาการคอมพิวเตอร์", "เทคโนโลยีสารสนเทศ"];
 const YEARS = [1, 2, 3, 4];
 const STATUSES = ["open", "closed", "archived"];
+const ROLE_OPTIONS = [
+  { value: "student", label: "นิสิต" },
+  { value: "teacher", label: "อาจารย์" },
+  { value: "all",     label: "ทุกกลุ่ม" },
+];
 
 const StatusBadge = ({ status }) => {
   const cls =
@@ -69,6 +76,8 @@ export default function AddAnnouncementPage() {
     department: "ไม่จำกัด",
     year: "",
     seats: "",
+    capacity: "",           // optional: ถ้าเว้นว่าง จะใช้ seats
+    role_target: "student", // NEW
     status: "open",
     location: "",
     deadline: "",
@@ -92,8 +101,7 @@ export default function AddAnnouncementPage() {
       ps.map((p, i) => {
         if (i !== idx) return p;
         const next = { ...p, [k]: v };
-        // ช่วยกรอก: ถ้ากรอกวันที่เริ่มแล้วยังไม่ใส่สิ้นสุด ให้คัดลอก
-        if (k === "startDate" && v && !next.endDate) next.endDate = v;
+        if (k === "startDate" && v && !next.endDate) next.endDate = v; // autofill
         return next;
       })
     );
@@ -103,7 +111,8 @@ export default function AddAnnouncementPage() {
 
   const validate = () => {
     if (!form.title.trim()) return "กรุณากรอกหัวข้อประกาศ";
-    if (!form.seats || Number(form.seats) < 1) return "กรุณากรอกจำนวนรับเป็นเลข ≥ 1";
+    const seatsNum = Number(form.seats);
+    if (!seatsNum || seatsNum < 1) return "กรุณากรอกจำนวนรับเป็นเลข ≥ 1";
     if (!periods.length || !periods[0].startDate)
       return "กรุณาใส่ช่วงวันที่ทำงานอย่างน้อย 1 ช่วง";
     return null;
@@ -117,13 +126,19 @@ export default function AddAnnouncementPage() {
       return;
     }
 
-    const wp = periods.map((p) => ({
+    const wp = periods.map((p, i) => ({
       start_date: toISODate(p.startDate),
       end_date: toISODate(p.endDate || p.startDate),
       start_time: toHHMM(p.startTime),
       end_time: toHHMM(p.endTime),
+      _idx: i,
     }));
     const first = wp[0] || {};
+
+    // capacity: ถ้าไม่กรอก ให้ใช้ค่า seats
+    const seatsNum = Number(form.seats) || 1;
+    const capacityNum =
+      form.capacity === "" || form.capacity == null ? seatsNum : Number(form.capacity);
 
     const payload = {
       title: form.title,
@@ -133,9 +148,11 @@ export default function AddAnnouncementPage() {
       status: form.status || "open",
       location: form.location || "",
       deadline: toISODate(form.deadline),
-      seats: Number(form.seats) || 1,
-      capacity: Number(form.seats) || 1,
 
+      seats: seatsNum,
+      capacity: capacityNum,
+
+      role_target: form.role_target,
       work_periods: wp,
       work_date: first.start_date || null,
       work_end: first.end_date || null,
@@ -173,7 +190,8 @@ export default function AddAnnouncementPage() {
       <div className="bg-blob bg-blob-1" aria-hidden="true" />
       <div className="bg-blob bg-blob-2" aria-hidden="true" />
       <div className="bg-blob bg-blob-3" aria-hidden="true" />
-      {/* Top Bar – ให้เหมือนทุกหน้า */}
+
+      {/* Top Bar */}
       <div className="hero-bar topbar glassy" style={{ height: 72 }}>
         <div className="container-xxl d-flex align-items-center h-100">
           <div className="d-flex align-items-center">
@@ -192,11 +210,7 @@ export default function AddAnnouncementPage() {
         <div className="row g-4">
           {/* FORM */}
           <div className="col-12 col-lg-7">
-            <form
-              className="card border-0 shadow-sm rounded-4"
-              onSubmit={onSubmit}
-              noValidate
-            >
+            <form className="card border-0 shadow-sm rounded-4" onSubmit={onSubmit} noValidate>
               <div className="card-body p-4 p-lg-5">
                 <div className="d-flex align-items-center justify-content-between mb-3">
                   <h3 className="fw-semibold mb-0">สร้างประกาศรับสมัครนิสิต</h3>
@@ -208,12 +222,14 @@ export default function AddAnnouncementPage() {
 
                 <div className="row g-3">
                   <div className="col-12">
-                    <label className="form-label">หัวข้อประกาศ</label>
+                    <label className="form-label" htmlFor="title">หัวข้อประกาศ</label>
                     <div className="input-group">
                       <span className="input-group-text bg-transparent">
                         <i className="bi bi-megaphone" />
                       </span>
                       <input
+                        id="title"
+                        name="title"
                         type="text"
                         className="form-control rounded-end-3"
                         value={form.title}
@@ -224,8 +240,10 @@ export default function AddAnnouncementPage() {
                   </div>
 
                   <div className="col-12">
-                    <label className="form-label">รายละเอียด</label>
+                    <label className="form-label" htmlFor="description">รายละเอียด</label>
                     <textarea
+                      id="description"
+                      name="description"
                       className="form-control rounded-3"
                       rows={4}
                       value={form.description}
@@ -234,9 +252,29 @@ export default function AddAnnouncementPage() {
                     />
                   </div>
 
+                  {/* Role Target */}
                   <div className="col-md-4">
-                    <label className="form-label">สาขาที่เกี่ยวข้อง</label>
+                    <label className="form-label" htmlFor="role_target">กลุ่มเป้าหมาย (Role)</label>
                     <select
+                      id="role_target"
+                      name="role_target"
+                      className="form-select rounded-3"
+                      value={form.role_target}
+                      onChange={(e) => updateField("role_target", e.target.value)}
+                    >
+                      {ROLE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="col-md-4">
+                    <label className="form-label" htmlFor="department">สาขาที่เกี่ยวข้อง</label>
+                    <select
+                      id="department"
+                      name="department"
                       className="form-select rounded-3"
                       value={form.department}
                       onChange={(e) => updateField("department", e.target.value)}
@@ -250,8 +288,10 @@ export default function AddAnnouncementPage() {
                   </div>
 
                   <div className="col-md-4">
-                    <label className="form-label">ชั้นปีที่สมัครได้</label>
+                    <label className="form-label" htmlFor="year">ชั้นปีที่สมัครได้</label>
                     <select
+                      id="year"
+                      name="year"
                       className="form-select rounded-3"
                       value={form.year}
                       onChange={(e) => updateField("year", e.target.value)}
@@ -266,8 +306,10 @@ export default function AddAnnouncementPage() {
                   </div>
 
                   <div className="col-md-4">
-                    <label className="form-label">สถานะ</label>
+                    <label className="form-label" htmlFor="status">สถานะ</label>
                     <select
+                      id="status"
+                      name="status"
                       className="form-select rounded-3"
                       value={form.status}
                       onChange={(e) => updateField("status", e.target.value)}
@@ -281,12 +323,14 @@ export default function AddAnnouncementPage() {
                   </div>
 
                   <div className="col-md-4">
-                    <label className="form-label">จำนวนรับ (คน)</label>
+                    <label className="form-label" htmlFor="seats">จำนวนรับ (คน)</label>
                     <div className="input-group">
                       <span className="input-group-text bg-transparent">
                         <i className="bi bi-people" />
                       </span>
                       <input
+                        id="seats"
+                        name="seats"
                         type="number"
                         min={1}
                         className="form-control rounded-end-3"
@@ -299,9 +343,26 @@ export default function AddAnnouncementPage() {
                     <div className="form-text">{seatHint}</div>
                   </div>
 
+                  {/* Capacity (optional) */}
                   <div className="col-md-4">
-                    <label className="form-label">วันปิดรับสมัคร</label>
+                    <label className="form-label" htmlFor="capacity">Capacity (ถ้าไม่กรอก = ใช้จำนวนรับ)</label>
                     <input
+                      id="capacity"
+                      name="capacity"
+                      type="number"
+                      min={1}
+                      className="form-control rounded-3"
+                      value={form.capacity}
+                      onChange={(e) => updateField("capacity", e.target.value)}
+                      placeholder="เช่น 5"
+                    />
+                  </div>
+
+                  <div className="col-md-4">
+                    <label className="form-label" htmlFor="deadline">วันปิดรับสมัคร</label>
+                    <input
+                      id="deadline"
+                      name="deadline"
                       type="date"
                       className="form-control rounded-3"
                       min={today}
@@ -310,13 +371,15 @@ export default function AddAnnouncementPage() {
                     />
                   </div>
 
-                  <div className="col-md-4">
-                    <label className="form-label">สถานที่ทำงาน</label>
+                  <div className="col-md-6">
+                    <label className="form-label" htmlFor="location">สถานที่ทำงาน</label>
                     <div className="input-group">
                       <span className="input-group-text bg-transparent">
                         <i className="bi bi-geo-alt" />
                       </span>
                       <input
+                        id="location"
+                        name="location"
                         type="text"
                         className="form-control rounded-end-3"
                         value={form.location}
@@ -329,9 +392,7 @@ export default function AddAnnouncementPage() {
                   {/* Work periods */}
                   <div className="col-12 mt-2">
                     <div className="d-flex align-items-center justify-content-between mb-2">
-                      <label className="form-label m-0">
-                        ช่วงวันที่ทำงาน / เวลา (เพิ่มได้หลายช่วง)
-                      </label>
+                      <label className="form-label m-0">ช่วงวันที่ทำงาน / เวลา (เพิ่มได้หลายช่วง)</label>
                       <button
                         type="button"
                         className="btn btn-outline-primary btn-sm rounded-pill"
@@ -347,8 +408,10 @@ export default function AddAnnouncementPage() {
                           <div className="card-body">
                             <div className="row g-2 align-items-end">
                               <div className="col-md-3">
-                                <label className="form-label small">วันที่เริ่ม</label>
+                                <label className="form-label small" htmlFor={`startDate_${idx}`}>วันที่เริ่ม</label>
                                 <input
+                                  id={`startDate_${idx}`}
+                                  name="startDate"
                                   type="date"
                                   className="form-control rounded-3"
                                   min={today}
@@ -359,8 +422,10 @@ export default function AddAnnouncementPage() {
                                 />
                               </div>
                               <div className="col-md-3">
-                                <label className="form-label small">วันที่สิ้นสุด</label>
+                                <label className="form-label small" htmlFor={`endDate_${idx}`}>วันที่สิ้นสุด</label>
                                 <input
+                                  id={`endDate_${idx}`}
+                                  name="endDate"
                                   type="date"
                                   className="form-control rounded-3"
                                   min={p.startDate || today}
@@ -371,8 +436,10 @@ export default function AddAnnouncementPage() {
                                 />
                               </div>
                               <div className="col-md-2">
-                                <label className="form-label small">เวลาเริ่ม</label>
+                                <label className="form-label small" htmlFor={`startTime_${idx}`}>เวลาเริ่ม</label>
                                 <input
+                                  id={`startTime_${idx}`}
+                                  name="startTime"
                                   type="time"
                                   className="form-control rounded-3"
                                   value={p.startTime}
@@ -382,8 +449,10 @@ export default function AddAnnouncementPage() {
                                 />
                               </div>
                               <div className="col-md-2">
-                                <label className="form-label small">เวลาสิ้นสุด</label>
+                                <label className="form-label small" htmlFor={`endTime_${idx}`}>เวลาสิ้นสุด</label>
                                 <input
+                                  id={`endTime_${idx}`}
+                                  name="endTime"
                                   type="time"
                                   className="form-control rounded-3"
                                   value={p.endTime}
@@ -450,10 +519,7 @@ export default function AddAnnouncementPage() {
                 )}
               </div>
               <div className="card-body d-flex flex-column">
-                <h5
-                  className="mb-1 text-truncate"
-                  title={form.title || "ชื่อประกาศ"}
-                >
+                <h5 className="mb-1 text-truncate" title={form.title || "ชื่อประกาศ"}>
                   {form.title || "ชื่อประกาศ"}
                 </h5>
                 <div className="small text-muted mb-2">
@@ -476,9 +542,18 @@ export default function AddAnnouncementPage() {
                   )}
                 </div>
 
-                {previewDeadline && (
+                {form.role_target && (
+                  <div className="small mb-2">
+                    กลุ่มเป้าหมาย:{" "}
+                    <span className="fw-medium">
+                      {ROLE_OPTIONS.find(r => r.value === form.role_target)?.label || form.role_target}
+                    </span>
+                  </div>
+                )}
+
+                {form.deadline && (
                   <div className="small text-muted mb-2">
-                    ปิดรับ: {previewDeadline}
+                    ปิดรับ: {dateTH(form.deadline)}
                   </div>
                 )}
 
@@ -492,6 +567,9 @@ export default function AddAnnouncementPage() {
                 )}
                 {form.seats && (
                   <div className="small text-muted mb-2">รับ {form.seats} คน</div>
+                )}
+                {form.capacity && (
+                  <div className="small text-muted mb-2">Capacity {form.capacity}</div>
                 )}
 
                 {form.description && (
@@ -510,30 +588,22 @@ export default function AddAnnouncementPage() {
 
       {/* style */}
       <style>{`
-        /* Animated background & blobs */
         .bg-animated{background:radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),radial-gradient(1000px 500px at 110% 10%, #e6f0ff 10%, transparent 55%),linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%);} 
         .glassy{backdrop-filter:blur(8px);} 
         .topbar{position:sticky;top:0;left:0;width:100%;background:linear-gradient(90deg, rgba(111,66,193,.9), rgba(142,92,255,.9));box-shadow:0 4px 16px rgba(111,66,193,.22);z-index:1040;border-bottom:1px solid rgba(255,255,255,.12);} 
-
-        /* Floating motion */
         .card-float{animation:floatY 6s ease-in-out infinite;} 
         @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
-
         .glass-card { backdrop-filter: blur(6px); transition: transform .15s ease, box-shadow .15s ease; }
         .glass-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(28,39,49,.12)!important; }
         .ratio-21x9 { aspect-ratio: 21/9; width: 100%; background: #e9ecef; }
         .year-pill { font-weight: 700; }
         .form-control:focus { box-shadow: 0 0 0 .2rem rgba(111,66,193,.12); border-color: #8e5cff; }
         .wave{position:fixed;left:0;right:0;bottom:-1px;width:100%;height:120px;}
-
-        /* Ripple */
         .ripple{position:relative;overflow:hidden;} 
         .ripple:after{content:"";position:absolute;inset:0;border-radius:inherit;opacity:0;background:radial-gradient(circle at var(--x,50%) var(--y,50%), rgba(255,255,255,.45), transparent 40%);transform:scale(.2);transition:transform .3s, opacity .45s;pointer-events:none;} 
         .ripple:active:after{opacity:1;transform:scale(1);transition:0s;} 
         .ripple{--x:50%;--y:50%;} 
         .ripple:focus-visible{outline:3px solid rgba(142,92,255,.45);outline-offset:2px;}
-
-        /* Blobs */
         .bg-blob{position:absolute;filter:blur(60px);opacity:.55;z-index:0;} 
         .bg-blob-1{width:420px;height:420px;left:-120px;top:-80px;background:#d7c6ff;animation:drift1 18s ease-in-out infinite;} 
         .bg-blob-2{width:360px;height:360px;right:-120px;top:120px;background:#c6ddff;animation:drift2 22s ease-in-out infinite;} 
