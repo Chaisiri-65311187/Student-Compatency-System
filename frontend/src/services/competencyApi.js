@@ -176,28 +176,24 @@ export const deleteActivity = (id, account_id) =>
     method: "DELETE",
   });
 
-/* ================= Peer Evaluation (optional endpoints) ================= */
+/* ================= Peer Evaluation (fixed endpoints) ================= */
 const FEATURE_PEER = String(import.meta.env?.VITE_FEATURE_PEER ?? "auto");
 let PEER_SUPPORT = "unknown";
 
 async function ensurePeerAvailable() {
-  if (FEATURE_PEER === "false") {
-    PEER_SUPPORT = "none";
-    return false;
-  }
+  if (FEATURE_PEER === "false") { PEER_SUPPORT = "none"; return false; }
   if (PEER_SUPPORT !== "unknown") return PEER_SUPPORT === "ok";
-  if (FEATURE_PEER === "true") {
-    PEER_SUPPORT = "ok";
-    return true;
-  }
-  const probes = [url("/api/peer/health"), url("/api/peer/ping"), url("/api/peer")];
+  if (FEATURE_PEER === "true") { PEER_SUPPORT = "ok"; return true; }
+
+  // ✅ probe ถูกต้องตาม backend จริง
+  const probes = [
+    url("/api/competency/peer/health"),
+    url("/api/competency/ping"),
+  ];
   for (const p of probes) {
     try {
       const r = await fetch(p);
-      if (r && r.ok) {
-        PEER_SUPPORT = "ok";
-        return true;
-      }
+      if (r && r.ok) { PEER_SUPPORT = "ok"; return true; }
     } catch { }
   }
   PEER_SUPPORT = "none";
@@ -207,6 +203,7 @@ async function ensurePeerAvailable() {
 export const peer = {
   isAvailable: async () => ensurePeerAvailable(),
 
+  // ✅ classmates
   classmates: async (major_id, year_level, exclude_id) => {
     const ok = await ensurePeerAvailable();
     if (!ok) return null;
@@ -215,19 +212,21 @@ export const peer = {
       year_level: String(year_level ?? ""),
       exclude_id: String(exclude_id ?? ""),
     }).toString();
-    return jsonFetch(url(`/api/peer/classmates?${qs}`));
+    const data = await jsonFetch(url(`/api/competency/peer/classmates?${qs}`));
+    return Array.isArray(data?.users) ? data.users : [];
   },
 
+  // ✅ submit evaluations
   submit: async (payload) => {
     const ok = await ensurePeerAvailable();
     if (!ok) return null;
-    return jsonFetch(url(`/api/peer`), {
+    return jsonFetch(url(`/api/competency/peer/evaluations`), {
       method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
-  // 🆕 เพิ่ม 2 ฟังก์ชันนี้เพื่อให้หน้า StudentInfoPage / StudentProfilePage ใช้งานได้
+  // ✅ average scores
   received: async (accountId, periodKey) => {
     const ok = await ensurePeerAvailable();
     if (!ok) return { avg: 0, count: 0 };
@@ -241,4 +240,14 @@ export const peer = {
     const qs = periodKey ? `?period=${encodeURIComponent(periodKey)}` : "";
     return jsonFetch(url(`/api/competency/peer/self/${accountId}${qs}`));
   },
+
+  // ✅ alias สำหรับโค้ดเดิม
+  listClassmates: async ({ major_id, year_level }) =>
+    (await jsonFetch(url(`/api/competency/peer/classmates?major_id=${major_id}&year_level=${year_level}`)))?.users ?? [],
+
+  submitEvaluation: async (payload) =>
+    jsonFetch(url(`/api/competency/peer/evaluations`), {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };

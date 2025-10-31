@@ -10,6 +10,7 @@ import {
   withdrawApplication,
   getAnnouncement,
 } from "../services/announcementsApi";
+import PeerEvaluationForm from "./competency/PeerEvaluationForm";
 
 /* ===== Date helpers (TH) ===== */
 const tz = "Asia/Bangkok";
@@ -38,7 +39,7 @@ const timeHM = (t) => {
     if (!isNaN(dt.getTime())) {
       return dt.toLocaleTimeString("th-TH", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
     }
-  } catch {}
+  } catch { }
   return String(t).slice(0, 5);
 };
 const rangeLine = (p) => {
@@ -85,7 +86,7 @@ function normalizeAnnouncement(r) {
     work_date: r.work_date || null,
     work_end: r.work_end || null,
     work_periods: Array.isArray(r.work_periods) ? r.work_periods
-                : Array.isArray(r.periods) ? r.periods : [],
+      : Array.isArray(r.periods) ? r.periods : [],
     deadline: r.deadline || null,
     status: r.status || "open",
     location: r.location || "",
@@ -200,7 +201,7 @@ export default function HomePage() {
         const data = await listAnnouncements({ status: "open" });
         const rows = Array.isArray(data) ? data
           : Array.isArray(data?.rows) ? data.rows
-          : Array.isArray(data?.items) ? data.items : [];
+            : Array.isArray(data?.items) ? data.items : [];
         setAnnouncements(rows.map(normalizeAnnouncement));
       } catch (e) {
         setLoadErr(e?.message || "โหลดประกาศไม่สำเร็จ");
@@ -264,7 +265,7 @@ export default function HomePage() {
         const seen = loadSeen();
         setNotifItems(notifs);
         setUnreadCount(notifs.filter((n) => !seen.has(n.id)).length);
-      } catch {}
+      } catch { }
     }, 30000);
     return () => clearInterval(timer);
   }, [user?.id, annTitleById]);
@@ -352,7 +353,7 @@ export default function HomePage() {
         alert("คุณได้สมัคร/ได้รับการยืนยันในประกาศนี้แล้ว");
         return;
       }
-    } catch {}
+    } catch { }
 
     // ดึงประกาศสดและเช็กปิด
     try {
@@ -363,7 +364,7 @@ export default function HomePage() {
         setAnnouncements((prev) => prev.map((a) => (a.id === annFresh.id ? annFresh : a)));
         return;
       }
-    } catch {}
+    } catch { }
 
     if (isClosed(ann)) { alert("ประกาศนี้ปิดรับแล้ว"); return; }
     if (!confirm(`ยืนยันการสมัครเข้าร่วม: ${ann.title}?`)) return;
@@ -452,8 +453,8 @@ export default function HomePage() {
                       const seen = loadSeen().has(n.id);
                       const titleText =
                         n.status === "completed" ? "ได้รับชั่วโมงแล้ว" :
-                        n.status === "accepted"  ? "ได้รับการอนุมัติ" :
-                        "ยืนยันสมัครแล้ว (รอตรวจ)";
+                          n.status === "accepted" ? "ได้รับการอนุมัติ" :
+                            "ยืนยันสมัครแล้ว (รอตรวจ)";
                       return (
                         <div key={n.id} className="list-group-item">
                           <div className="d-flex">
@@ -753,7 +754,7 @@ export default function HomePage() {
                     ไม่สามารถโหลดข้อมูลโปรไฟล์ได้ ลองรีเฟรชหน้านี้อีกครั้ง
                   </div>
                 ) : (
-                  <div className="text-muted">ฟอร์มประเมินเพื่อน…</div>
+                  <PeerEvaluationForm user={user} profile={profile} periodKey={periodKey} />
                 )}
               </div>
               <div className="modal-footer border-0">

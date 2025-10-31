@@ -677,4 +677,130 @@ router.get("/peer/self/:accountId", async (req, res) => {
   }
 });
 
+// GET /api/peer/classmates?major_id=..&year_level=..
+router.get("/classmates", async (req, res) => {
+  try {
+    const major_id = Number(req.query.major_id);
+    const year_level = String(req.query.year_level || "");
+    if (!major_id || !year_level) return res.status(400).json({ message: "missing major_id or year_level" });
+
+    const [rows] = await pool.query(
+      `SELECT id, username, student_id, email, firstname, lastname, major_id, year_level
+       FROM account
+       WHERE major_id=? AND year_level=? AND is_active=1`,
+      [major_id, year_level]
+    );
+    res.json({ users: rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: "list classmates error" });
+  }
+});
+
+// ✅ POST /api/competency/peer/evaluations
+router.post("/peer/evaluations", async (req, res) => {
+  try {
+    const {
+      period_key,
+      evaluator_id,    // = rater_id
+      target_id,       // = ratee_id
+      major_id,
+      year_level,
+      scores = {},
+      comment,
+    } = req.body || {};
+
+    if (!period_key || !evaluator_id || !target_id) {
+      return res.status(400).json({ message: "missing required fields" });
+    }
+    if (Number(evaluator_id) === Number(target_id)) {
+      return res.status(400).json({ message: "cannot evaluate yourself in peer form" });
+    }
+
+    const now = new Date();
+    const vals = [
+      period_key,
+      Number(evaluator_id), // rater_id
+      Number(target_id),    // ratee_id
+      Number(major_id) || null,
+      String(year_level ?? "") || null,
+      Number(scores.communication || 0),
+      Number(scores.teamwork || 0),
+      Number(scores.responsibility || 0),
+      Number(scores.cooperation || 0),
+      Number(scores.adaptability || 0),
+      comment || "",
+      0, // is_self = 0 (เพื่อนประเมินเพื่อน)
+      now,
+    ];
+
+    // แนะนำให้มี UNIQUE KEY (period_key, rater_id, ratee_id) ในตาราง peer_evaluations
+    await pool.query(
+      `INSERT INTO peer_evaluations
+       (period_key, rater_id, ratee_id, major_id, year_level,
+        communication, teamwork, responsibility, cooperation, adaptability,
+        comment, is_self, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         communication=VALUES(communication),
+         teamwork=VALUES(teamwork),
+         responsibility=VALUES(responsibility),
+         cooperation=VALUES(cooperation),
+         adaptability=VALUES(adaptability),
+         comment=VALUES(comment),
+         created_at=VALUES(created_at)`,
+      vals
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /peer/evaluations error", e);
+    res.status(500).json({ message: "submit evaluation error" });
+  }
+});
+
+/* ---------- Peer health & classmates (fix 404) ---------- */
+
+// health check ให้ FE ตรวจว่ามีโมดูล peer
+router.get("/peer/health", (_req, res) => {
+  res.json({ ok: true, scope: "peer" });
+});
+// ✅ GET /api/competency/peer/classmates?major_id=..&year_level=..&exclude_id=..
+router.get("/peer/classmates", async (req, res) => {
+  try {
+    const major_id = Number(req.query.major_id);
+    const year_level = String(req.query.year_level || "");
+    const exclude_id = Number(req.query.exclude_id || 0);
+
+    if (!major_id || !year_level) {
+      return res.status(400).json({ message: "missing major_id or year_level" });
+    }
+
+    const params = [major_id, year_level];
+    let sql = `
+      SELECT 
+        id,
+        username,
+        full_name AS fullname,
+        first_name AS firstname,
+        last_name  AS lastname,
+        email,
+        major_id,
+        year_level
+      FROM accounts
+      WHERE major_id = ? AND year_level = ?
+    `;
+    if (exclude_id) {
+      sql += " AND id <> ?";
+      params.push(exclude_id);
+    }
+    sql += " ORDER BY fullname IS NULL, fullname, first_name, last_name, username";
+
+    const [rows] = await pool.query(sql, params);
+    res.json({ users: rows });
+  } catch (e) {
+    console.error("GET /peer/classmates error:", e?.message || e);
+    res.status(500).json({ message: "list classmates error" });
+  }
+});
 module.exports = router;

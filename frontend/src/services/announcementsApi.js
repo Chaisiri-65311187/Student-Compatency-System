@@ -134,3 +134,4 @@ export function deleteAnnouncement(id) {
     body: JSON.stringify({ status: "archived" }),
   });
 }
+  
