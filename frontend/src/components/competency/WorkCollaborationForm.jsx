@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { peer, getCompetencyProfile } from "../../services/competencyApi";
+import Swal from "sweetalert2";
 
 /* ตัวเลือกคะแนน (สเกล 1–5 ฝั่ง UI) */
 const SCORE_OPTIONS = [1, 2, 3, 4, 5];
@@ -16,6 +17,15 @@ const TOPICS = [
 /** แปลงคะแนน 1–5 → 0–100 (1=20, 5=100) */
 const toPct = (v) => (v == null ? 0 : Math.round((Number(v) / 5) * 100));
 
+/** Toast สั้น ๆ มุมขวาบน */
+const Toast = Swal.mixin({
+  toast: true,
+  position: "top-end",
+  showConfirmButton: false,
+  timer: 1800,
+  timerProgressBar: true,
+});
+
 /** หา periodKey ปัจจุบัน เช่น 2025-1 (มค–พค = เทอม 1, มิย–ธค = เทอม 2) */
 const usePeriodKey = () => {
   return useMemo(() => {
@@ -27,31 +37,113 @@ const usePeriodKey = () => {
   }, []);
 };
 
+/** เดาว่ามี submission แล้วหรือยัง จากผลที่แบ็กเอนด์ส่งมา (รองรับหลายรูปแบบ) */
+function hasSelfSubmission(res) {
+  if (!res) return false;
+  if (Array.isArray(res.items) && res.items.length > 0) return true;
+  if (res.id) return true;
+  const any = Number(res.avg ?? res.summary?.self_avg ?? 0);
+  if (Number.isFinite(any) && any > 0) return true;
+  return false;
+}
+
 export default function WorkCollaborationForm({ user }) {
   const periodKey = usePeriodKey();
 
   const [scores, setScores] = useState({});
   const [notes, setNotes] = useState({});
   const [saving, setSaving] = useState(false);
+
   const [submitted, setSubmitted] = useState(false);
+  const [checking, setChecking] = useState(true);   // กำลังเช็คว่าเคยส่งหรือยัง
   const [error, setError] = useState("");
+
+  // เช็คครั้งเดียวตอนเปิดหน้า: เคยส่ง self ประเมินรอบนี้หรือยัง
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setChecking(true);
+        const okAvail = await peer.isAvailable();
+        if (!okAvail) throw new Error("ระบบประเมินเพื่อนไม่ได้เปิดใช้งาน (peer api ไม่พร้อม)");
+
+        let res;
+        if (typeof peer.self === "function") {
+          res = await peer.self(user.id, periodKey);
+        } else {
+          res = await peer.given(user.id, periodKey);
+        }
+        if (!alive) return;
+
+        if (hasSelfSubmission(res)) setSubmitted(true);
+      } catch (e) {
+        console.warn(e);
+        Toast.fire({ icon: "warning", title: "เชื่อมต่อระบบประเมินไม่ได้ — ยังส่งได้" });
+      } finally {
+        if (alive) setChecking(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [user.id, periodKey]);
 
   const handleChange = (key, val) => {
     setScores((prev) => ({ ...prev, [key]: val }));
   };
-
   const handleNote = (key, val) => {
     setNotes((prev) => ({ ...prev, [key]: val }));
   };
 
   const handleSubmit = async () => {
     setError("");
-    if (Object.keys(scores).length < TOPICS.length) {
-      alert("กรุณาให้คะแนนครบทุกข้อก่อนส่งแบบประเมิน");
+
+    if (submitted) {
+      Swal.fire({
+        icon: "info",
+        title: "คุณได้ส่งแบบประเมินรอบนี้แล้ว",
+        text: "ไม่สามารถส่งซ้ำได้",
+        confirmButtonText: "ตกลง",
+      });
       return;
     }
+    if (Object.keys(scores).length < TOPICS.length) {
+      Swal.fire({
+        icon: "warning",
+        title: "ให้คะแนนไม่ครบ",
+        text: "กรุณาให้คะแนนครบทุกข้อก่อนส่งแบบประเมิน",
+        confirmButtonText: "ตกลง",
+      });
+      return;
+    }
+
+    // ยืนยันก่อนส่ง (ส่งได้ครั้งเดียว)
+    const confirm = await Swal.fire({
+      icon: "question",
+      title: "ยืนยันการส่งแบบประเมิน?",
+      text: "ส่งแล้วแก้ไขไม่ได้ และส่งได้เพียงครั้งเดียวในรอบนี้",
+      showCancelButton: true,
+      confirmButtonText: "ส่งเลย",
+      cancelButtonText: "ยกเลิก",
+    });
+    if (!confirm.isConfirmed) return;
+
     setSaving(true);
     try {
+      // ป้องกันแข่งเงื่อนไข: เช็คซ้ำอีกครั้งก่อนบันทึก
+      try {
+        const resCheck = typeof peer.self === "function"
+          ? await peer.self(user.id, periodKey)
+          : await peer.given(user.id, periodKey);
+        if (hasSelfSubmission(resCheck)) {
+          setSubmitted(true);
+          Swal.fire({
+            icon: "info",
+            title: "คุณได้ส่งแบบประเมินรอบนี้แล้ว",
+            confirmButtonText: "ตกลง",
+          });
+          return;
+        }
+      } catch { /* ignore */ }
+
       // ดึงข้อมูลโปรไฟล์เพื่อเติม major_id / year_level (ถ้ามี)
       let major_id = null;
       let year_level = null;
@@ -59,11 +151,8 @@ export default function WorkCollaborationForm({ user }) {
         const prof = await getCompetencyProfile(user.id);
         major_id = prof?.account?.major_id ?? null;
         year_level = prof?.account?.year_level ?? null;
-      } catch {
-        // เงียบไว้ ใช้ null ได้
-      }
+      } catch { /* ใช้ค่า null ได้ */ }
 
-      // แปลงสเกล 1–5 → 0–100 ตาม backend/สูตรรวม
       const payload = {
         period_key: periodKey,
         rater_id: user.id,
@@ -75,34 +164,51 @@ export default function WorkCollaborationForm({ user }) {
         responsibility: toPct(scores.responsibility),
         cooperation: toPct(scores.cooperation),
         adaptability: toPct(scores.adaptability),
-        comment: JSON.stringify({ notes }), // เก็บหมายเหตุทุกแกนไว้ใน comment
+        comment: JSON.stringify({ notes }),
       };
 
-      // ส่งเข้าระบบ peer (backend จะ upsert และตั้ง is_self=1)
       const okAvail = await peer.isAvailable();
-      if (!okAvail) {
-        throw new Error("ระบบประเมินเพื่อนไม่ได้เปิดใช้งาน (peer api ไม่พร้อม)");
-      }
+      if (!okAvail) throw new Error("ระบบประเมินเพื่อนไม่ได้เปิดใช้งาน (peer api ไม่พร้อม)");
+
       const res = await peer.submit(payload);
-      if (!res || res.ok !== true) {
-        throw new Error("บันทึกประเมินตนเองไม่สำเร็จ");
-      }
+      if (!res || res.ok !== true) throw new Error("บันทึกประเมินตนเองไม่สำเร็จ");
+
       setSubmitted(true);
+      await Swal.fire({
+        icon: "success",
+        title: "บันทึกแบบประเมินเรียบร้อย!",
+        showConfirmButton: false,
+        timer: 1500,
+      });
     } catch (err) {
       console.error(err);
       setError(err?.message || "เกิดข้อผิดพลาดในการบันทึก");
-      alert(err?.message || "บันทึกไม่สำเร็จ");
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err?.message || "กรุณาลองใหม่อีกครั้ง",
+        confirmButtonText: "ตกลง",
+      });
     } finally {
       setSaving(false);
     }
   };
+
+  if (checking) {
+    return (
+      <div className="alert alert-secondary rounded-4">
+        กำลังตรวจสอบสถานะการส่งแบบประเมินของคุณ…
+      </div>
+    );
+  }
 
   if (submitted) {
     return (
       <div className="alert alert-success rounded-4">
         ✅ บันทึกแบบประเมินตนเองเรียบร้อยแล้ว
         <div className="small text-muted mt-1">
-          คะแนนนี้จะถูกนำไปคิด “ทำงานร่วมกับผู้อื่น” (Self 40% + Peer 60%)
+          คะแนนนี้จะถูกนำไปคิด “ทำงานร่วมกับผู้อื่น”
+          <br />สัดส่วนปัจจุบัน: Self 40% + Peer 60% (หรือขึ้นกับการตั้งค่าของระบบ)
         </div>
       </div>
     );
@@ -141,6 +247,7 @@ export default function WorkCollaborationForm({ user }) {
                     className="form-select w-auto mx-auto"
                     value={scores[t.key] ?? ""}
                     onChange={(e) => handleChange(t.key, Number(e.target.value))}
+                    disabled={saving}
                   >
                     <option value="">เลือก</option>
                     {SCORE_OPTIONS.map((s) => (
@@ -161,6 +268,7 @@ export default function WorkCollaborationForm({ user }) {
                     placeholder="หมายเหตุ (ถ้ามี)"
                     value={notes[t.key] ?? ""}
                     onChange={(e) => handleNote(t.key, e.target.value)}
+                    disabled={saving}
                   />
                 </td>
               </tr>

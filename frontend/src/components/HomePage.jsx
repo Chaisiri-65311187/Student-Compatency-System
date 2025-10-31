@@ -8,7 +8,7 @@ import {
   listMyApplications,
   applyAnnouncement,
   withdrawApplication,
-  getAnnouncement, // 👈 ใช้เช็กสดก่อนสมัคร
+  getAnnouncement,
 } from "../services/announcementsApi";
 
 /* ===== Date helpers (TH) ===== */
@@ -56,13 +56,12 @@ const rangeLine = (p) => {
 /* ===== UI const ===== */
 const PURPLE = "#6f42c1";
 
-/* ===== Normalizer & close rules (ไม่เชื่อ remaining จาก BE) ===== */
+/* ===== Normalizer & close rules ===== */
 function normalizeAnnouncement(r) {
   const rawCap = r.capacity ?? r.seats;
   const capacity =
     rawCap == null || String(rawCap).trim() === "" ? null : Number(rawCap);
 
-  // รองรับหลายชื่อ field ของ "จำนวนที่กินที่นั่งไปแล้ว"
   const acceptedLike = [
     r.accepted_count, r.approved_count, r.filled, r.current,
     r.applied_count, r.app_count, r.accepted, r.count
@@ -70,10 +69,8 @@ function normalizeAnnouncement(r) {
     .map((v) => (Number.isFinite(Number(v)) ? Number(v) : 0))
     .reduce((a, b) => Math.max(a, b), 0);
 
-  const completed = Number.isFinite(Number(r.completed_count)) ? Number(r.completed_count) : 0;
-  const applicants = Number.isFinite(Number(r.applicants_count)) ? Number(r.applicants_count) : 0;
-
-  // ใช้ค่าสูงสุดของ acceptedLike กับ applicants (กันฝั่งหนึ่งไม่อัปเดต)
+  const completed = Number(r.completed_count || 0);
+  const applicants = Number(r.applicants_count || 0);
   const occupiedBase = Math.max(acceptedLike, applicants);
   const occupied = occupiedBase + completed;
   const remaining = capacity == null ? null : Math.max(0, capacity - occupied);
@@ -100,19 +97,12 @@ function normalizeAnnouncement(r) {
     finished: r.finished || r.is_finished || false,
   };
 }
-
 function isClosed(a) {
   const now = new Date();
   const statusStr = String(a.status || "").toLowerCase();
-
-  // อะไรที่ไม่ใช่ "open/เปิดรับ" = ปิด
   const notExplicitlyOpen = !["open", "เปิดรับ"].includes(statusStr);
-
-  // เลยวันปิดรับ
   const dl = parseSafeDate(a.deadline);
   const deadlinePassed = !!dl && dl < now;
-
-  // ช่วงทำงานหมดไปแล้วทั้งหมด
   const periodsOver =
     Array.isArray(a.work_periods) &&
     a.work_periods.length > 0 &&
@@ -120,23 +110,11 @@ function isClosed(a) {
       const ed = parseSafeDate(p.end_date || p.start_date);
       return !!ed && ed < now;
     });
-
-  // เต็ม
   const cap = Number.isFinite(Number(a.capacity)) ? Number(a.capacity) : null;
   const full = cap != null && (a.remaining ?? 0) <= 0;
-
-  // ธง finished จากฝั่ง BE (ถ้ามี), หรือเคยมีการเสร็จสิ้นงาน
   const finishedFlag = !!a.finished || !!a.is_finished;
-  const hasCompleted = Number.isFinite(Number(a.completed_count)) && Number(a.completed_count) > 0;
-
-  return (
-    notExplicitlyOpen ||
-    deadlinePassed ||
-    periodsOver ||
-    full ||
-    finishedFlag ||
-    hasCompleted
-  );
+  const hasCompleted = Number(a.completed_count || 0) > 0;
+  return notExplicitlyOpen || deadlinePassed || periodsOver || full || finishedFlag || hasCompleted;
 }
 
 export default function HomePage() {
@@ -157,7 +135,7 @@ export default function HomePage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // Peer eval (คงไว้)
+  // Peer eval
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const periodKey = useMemo(() => {
@@ -214,7 +192,7 @@ export default function HomePage() {
   };
   const saveSeen = (idsSet) => { localStorage.setItem(NOTI_KEY, JSON.stringify(Array.from(idsSet))); };
 
-  // โหลดประกาศ (normalize ทุกตัว)
+  // โหลดประกาศ
   useEffect(() => {
     (async () => {
       setLoading(true); setLoadErr("");
@@ -234,11 +212,12 @@ export default function HomePage() {
 
   // โหลด “ประกาศที่ฉันสมัคร”
   useEffect(() => {
-    if (!user?.id) return;
+    const sid = Number(user?.id ?? 0);
+    if (!Number.isFinite(sid) || sid <= 0) return; // กัน 400 จาก id ไม่ถูก
     let alive = true;
     (async () => {
       try {
-        const data = await listMyApplications(user.id);
+        const data = await listMyApplications(sid);
         const items = Array.isArray(data) ? data : data?.items || [];
         const map = {};
         items.forEach((x) => { map[x.announcement_id] = x.status; });
@@ -258,17 +237,20 @@ export default function HomePage() {
         const seen = loadSeen();
         setNotifItems(notifs);
         setUnreadCount(notifs.filter((n) => !seen.has(n.id)).length);
-      } catch {}
+      } catch (e) {
+        console.error("listMyApplications:", e?.message || e);
+      }
     })();
     return () => { alive = false; };
   }, [user?.id, annTitleById]);
 
   // Poll แจ้งเตือนทุก 30 วิ
   useEffect(() => {
-    if (!user?.id) return;
+    const sid = Number(user?.id ?? 0);
+    if (!Number.isFinite(sid) || sid <= 0) return;
     const timer = setInterval(async () => {
       try {
-        const data = await listMyApplications(user.id);
+        const data = await listMyApplications(sid);
         const items = Array.isArray(data) ? data : data?.items || [];
         const notifs = items
           .filter((x) => ["pending", "accepted", "completed"].includes(x.status))
@@ -346,56 +328,49 @@ export default function HomePage() {
     </div>
   );
 
-  const onApply = async (ann) => {
-    if (!user?.id) { alert("กรุณาเข้าสู่ระบบนิสิตก่อนสมัคร"); return; }
+  const refreshMyApps = async () => {
+    const sid = Number(user?.id ?? 0);
+    if (!Number.isFinite(sid) || sid <= 0) return;
+    const data = await listMyApplications(sid);
+    const items = Array.isArray(data) ? data : data?.items || [];
+    const map = {};
+    items.forEach((x) => { map[x.announcement_id] = x.status; });
+    setMyAppStatus(map);
+    return items;
+  };
 
-    // 1) อัปเดตสถานะของฉันทันที ป้องกันสมัครซ้ำ
+  const onApply = async (ann) => {
+    const sid = Number(user?.id ?? 0);
+    if (!Number.isFinite(sid) || sid <= 0) { alert("กรุณาเข้าสู่ระบบนิสิตก่อนสมัคร"); return; }
+
+    // ตรวจซ้ำก่อนสมัคร
     try {
-      const latest = await listMyApplications(user.id);
-      const itemsL = Array.isArray(latest) ? latest : latest?.items || [];
-      const latestMap = {};
-      itemsL.forEach((x) => { latestMap[x.announcement_id] = x.status; });
-      setMyAppStatus(latestMap);
-      const s = latestMap[ann.id];
-      if (["pending", "accepted", "completed", "awarded"].includes(s)) {
+      const latest = await refreshMyApps();
+      const m = {};
+      (latest || []).forEach((x) => { m[x.announcement_id] = x.status; });
+      if (["pending", "accepted", "completed", "awarded"].includes(m[ann.id])) {
         alert("คุณได้สมัคร/ได้รับการยืนยันในประกาศนี้แล้ว");
         return;
       }
     } catch {}
 
-    // 2) ดึงประกาศสดจากเซิร์ฟเวอร์ แล้ว normalize + เช็กปิดอีกครั้ง (กันหน้าจอเก่า)
+    // ดึงประกาศสดและเช็กปิด
     try {
       const fresh = await getAnnouncement(ann.id);
       const annFresh = normalizeAnnouncement(fresh);
       if (isClosed(annFresh)) {
         alert("ประกาศนี้ปิดรับแล้ว");
-        // อัปเดตรายการในหน้าให้ตรงกับสด
         setAnnouncements((prev) => prev.map((a) => (a.id === annFresh.id ? annFresh : a)));
         return;
       }
     } catch {}
 
-    // 3) เช็กจากตัวที่อยู่ในหน้าอีกที
     if (isClosed(ann)) { alert("ประกาศนี้ปิดรับแล้ว"); return; }
     if (!confirm(`ยืนยันการสมัครเข้าร่วม: ${ann.title}?`)) return;
 
     try {
-      await applyAnnouncement(ann.id, user.id);
-      // refresh map
-      const data = await listMyApplications(user.id);
-      const items = Array.isArray(data) ? data : data?.items || [];
-      const map = {};
-      items.forEach((x) => { map[x.announcement_id] = x.status; });
-      setMyAppStatus(map);
-
-      // แจ้งเตือนท้องถิ่นทันที (รอตรวจ)
-      const localId = `local-${user.id}-${ann.id}-pending-${Date.now()}`;
-      const newItem = { id: localId, status: "pending", announcement_id: ann.id, title: ann.title, when: new Date().toISOString() };
-      setNotifItems((prev) => [newItem, ...prev]);
-      setUnreadCount((n) => n + 1);
-      const seen = loadSeen(); // อย่าเพิ่มเข้า seen
-      saveSeen(seen);
-
+      await applyAnnouncement(ann.id, sid);
+      await refreshMyApps();
       alert("ยืนยันการสมัครเรียบร้อย (สถานะ: รอตรวจ)");
     } catch (e) {
       alert(e?.message || "สมัครไม่สำเร็จ");
@@ -403,15 +378,12 @@ export default function HomePage() {
   };
 
   const onWithdraw = async (ann) => {
-    if (!user?.id) return;
+    const sid = Number(user?.id ?? 0);
+    if (!Number.isFinite(sid) || sid <= 0) return;
     if (!confirm("ยืนยันถอนการสมัคร?")) return;
     try {
-      await withdrawApplication(ann.id, user.id);
-      const data = await listMyApplications(user.id);
-      const items = Array.isArray(data) ? data : data?.items || [];
-      const map = {};
-      items.forEach((x) => { map[x.announcement_id] = x.status; });
-      setMyAppStatus(map);
+      await withdrawApplication(ann.id, sid);
+      await refreshMyApps();
     } catch (e) {
       alert(e?.message || "ถอนสมัครไม่สำเร็จ");
     }
@@ -561,7 +533,7 @@ export default function HomePage() {
 
             {/* Results */}
             {loading ? (
-              <div className="row g-4">{Array.from({ length: 6 }).map((_, i) => (<SkeletonCard key={i} />))}</div>
+              <div className="row g-4">{Array.from({ length: 6 }).map((_, i) => (<div className="col-md-6 col-lg-4" key={i}><div className="card shadow-sm border-0 rounded-4 overflow-hidden glass-card"><div className="ratio ratio-21x9 placeholder-wave" /><div className="card-body"><h5 className="card-title placeholder-wave"><span className="placeholder col-8"></span></h5><p className="placeholder-wave mb-2"><span className="placeholder col-6"></span></p><p className="placeholder-wave mb-2"><span className="placeholder col-4"></span></p></div></div></div>))}</div>
             ) : loadErr ? (
               <div className="alert alert-danger rounded-4">เกิดข้อผิดพลาด: {loadErr}</div>
             ) : filteredAnnouncements.length === 0 ? (
@@ -573,7 +545,6 @@ export default function HomePage() {
                   const closed = isClosed(item);
                   const deptBadge = item.department && item.department !== 'ไม่จำกัด' ? item.department : null;
 
-                  // ปุ่มฝั่งขวา
                   let rightButton = null;
                   if (myStatus === "completed" || myStatus === "awarded") {
                     rightButton = (<span className="badge text-bg-success align-self-center">ได้รับชั่วโมงแล้ว</span>);
@@ -600,7 +571,6 @@ export default function HomePage() {
                   return (
                     <div key={item.id} className="col-md-6 col-lg-4">
                       <div className="card shadow-sm border-0 rounded-4 overflow-hidden glass-card h-100">
-                        {/* Banner */}
                         <div className="ratio ratio-21x9" style={{ background: `linear-gradient(135deg, ${PURPLE}, #b388ff)`, position: "relative" }}>
                           <div className="banner-overlay">
                             {item.year && (<span className={`year-pill year${item.year}`}>ปี {item.year}</span>)}
@@ -615,13 +585,11 @@ export default function HomePage() {
                             {deptBadge && <span className="badge bg-light text-dark ms-2">{deptBadge}</span>}
                           </div>
 
-                          {/* จำนวนรับ (เหลือ/ทั้งหมด) */}
                           <div className="small mb-2">
                             <i className="bi bi-people me-1" />
                             รับ: {item.remaining ?? "ไม่จำกัด"}{item.capacity != null && <> / {item.capacity}</>}
                           </div>
 
-                          {/* ช่วงวันที่ทำงาน */}
                           {Array.isArray(item.work_periods) && item.work_periods.length > 0 ? (
                             <div className="small mb-2">
                               <div className="text-muted">ช่วงวันที่ทำงาน:</div>
@@ -739,7 +707,6 @@ export default function HomePage() {
               <div className="modal-footer border-0">
                 <button className="btn btn-secondary rounded-3 ripple" onClick={() => { setShowModal(false); setSelectedAnnouncement(null); }}>ปิด</button>
 
-                {/* ปุ่มในโมดัลก็ตัดสินเหมือนการ์ด */}
                 {(() => {
                   const ms = myAppStatus[selectedAnnouncement.id];
                   if (ms === "completed" || ms === "awarded") {
@@ -797,7 +764,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Local styles (เหมือนเดิม) */}
+      {/* Local styles */}
       <style>{`
         .bg-animated {
           background: radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),

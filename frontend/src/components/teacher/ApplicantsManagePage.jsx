@@ -155,7 +155,7 @@ export default function ApplicantsManagePage() {
         return;
       }
 
-      await changeApplicationStatus(annId, appId, action);
+      await changeApplicationStatus(appId, action); 
       setLiveMsg(`${verb}เรียบร้อย: ${app.full_name}`);
       await refreshAll(); // refresh ทั้งหัว/ตาราง (อัปเดต remaining/progress)
       await Swal.fire("สำเร็จ", `${verb}ผู้สมัครเรียบร้อย`, "success");

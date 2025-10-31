@@ -20,7 +20,7 @@ import {
   calcAllCompetencies,
   scoreAcademic,
   toArray,
-  scoreCollaboration,       // ✅ ใช้สูตรถ่วงน้ำหนัก Peer 80% : Self 20%      
+  // ❌ ไม่ใช้ scoreCollaboration (เราคำนวณเองให้สเกลตรงกัน)
 } from "../../utils/scoring";
 
 const API_BASE = (import.meta.env?.VITE_API_BASE || "http://localhost:3000").replace(/\/+$/, "");
@@ -43,6 +43,7 @@ const Chip = ({ active, onClick, children }) => (
   </button>
 );
 
+/* ================= Helpers (grades) ================= */
 const normalizeGrade = (g) => {
   if (g == null) return null;
   const s = String(g).trim().toUpperCase();
@@ -77,30 +78,57 @@ const pickGradeByCode = (gmap, rawCode) => {
   return hit ? gmap[hit] : null;
 };
 
+/* ============== Helper (peer/self normalizer) ============== */
+/** แปลงคะแนน 1..5 → 0..100 (1=0%, 5=100%) หรือถ้าได้ 0..100 อยู่แล้วจะ clamp ให้ 0..100 */
+const normalizePeerScore = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(Math.max(0, Math.min(100, n)));
+};
+
+/** เฉลี่ยจาก object แยกหัวข้อ (communication/teamwork/...) สเกล 1..5 */
+const avgFromTopicObject = (obj) => {
+  if (!obj || typeof obj !== "object") return null;
+  const keys = ["communication", "teamwork", "responsibility", "cooperation", "adaptability"];
+  const vals = keys.map(k => Number(obj[k])).filter(v => Number.isFinite(v) && v >= 0);
+  if (!vals.length) return null;
+  return vals.reduce((s, v) => s + v, 0) / vals.length; // 1..5
+};
+
+/** คำนวณคะแนนทำงานร่วมกับผู้อื่น (สเกล 0..100): Peer 80% + Self 20% */
+const computeCollabScore = (peerAvg, selfAvg) => {
+  const p = Math.max(0, Math.min(100, Number(peerAvg) || 0));
+  const s = Math.max(0, Math.min(100, Number(selfAvg) || 0));
+  return Math.round(0.8 * p + 0.2 * s);
+};
+
 /* ===== Helper: แปลงผลจาก /peer/received → peerAvg(0..100), peerCount ===== */
 function extractPeerSummary(rec) {
-  // รูปแบบ backend: { items, summary: { count, avg: {communication,teamwork,...}, period_key } }
-  let peerCount = Number(rec?.summary?.count ?? rec?.count ?? 0) || 0;
+  const peerCount = Number(rec?.summary?.count ?? rec?.count ?? 0) || 0;
 
-  // 1) ถ้าได้ avg object (1..5) → เฉลี่ยแล้ว normalize เป็น 0..100
+  // 1) ถ้ามีค่าเฉลี่ยแบบตัวเลขมาแล้ว (ส่วนใหญ่เป็น 0..100) — ใช้ก่อนเลย
+  const direct = Number(
+    rec?.avg ??
+    rec?.summary?.peer_avg ??
+    rec?.avg15 ??
+    rec?.summary?.avg_all ??
+    rec?.summary?.avg_all_15 ??
+    0
+  );
+  if (Number.isFinite(direct) && direct >= 0) {
+    // ถ้าเป็น 1..5 แปลงเป็น 0..100, ถ้าเป็น % แล้วจะ clamp ให้อยู่ในช่วง 0..100
+    return { peerAvg: normalizePeerScore(direct), peerCount };
+  }
+
+  // 2) ถ้าได้แบบแยกหัวข้อ (communication/teamwork/...) → หา mean แล้วค่อย normalize
   if (rec?.summary?.avg && typeof rec.summary.avg === "object") {
-    const obj = rec.summary.avg;
-    const vals = ["communication", "teamwork", "responsibility", "cooperation", "adaptability"]
-      .map((k) => Number(obj[k])).filter((v) => Number.isFinite(v) && v > 0);
-    if (vals.length) {
-      const mean15 = vals.reduce((s, v) => s + v, 0) / vals.length; // 1..5
-      return { peerAvg: normalizePeerScore(mean15), peerCount };
+    const mean = avgFromTopicObject(rec.summary.avg); // ← ยอมรับ 0 ด้วย
+    if (mean != null) {
+      return { peerAvg: normalizePeerScore(mean), peerCount };
     }
   }
 
-  // 2) ถ้ามีค่าเฉลี่ยรวมรูปอื่น
-  const any = Number(rec?.avg ?? rec?.summary?.peer_avg ?? 0);
-  if (Number.isFinite(any) && any > 0) {
-    // เดาว่าอาจเป็น 1..5 หรือ 0..100
-    if (any <= 5) return { peerAvg: normalizePeerScore(any), peerCount };
-    return { peerAvg: Math.max(0, Math.min(100, any)), peerCount };
-  }
-
+  // 3) ไม่พบข้อมูลที่ใช้ได้
   return { peerAvg: 0, peerCount };
 }
 /* ======================================================= */
@@ -114,10 +142,10 @@ export default function StudentInfoPage() {
     if (user.role !== "teacher") navigate("/home");
   }, [user, navigate]);
 
-  // ช่วง/รหัสรอบประเมิน (เช่น 2025-1)
+  // ช่วง/รหัสรอบประเมิน (ม.ค.–พ.ค. = 1, มิ.ย.–ธ.ค. = 2)
   const periodKey = useMemo(() => {
     const d = new Date(); const y = d.getFullYear(); const m = d.getMonth() + 1;
-    const sem = m <= 5 ? 1 : 2; // ปรับ logic ได้
+    const sem = m <= 5 ? 1 : 2;
     return `${y}-${sem}`;
   }, []);
 
@@ -199,10 +227,10 @@ export default function StudentInfoPage() {
         }
         setEnrich(baseMap);
 
-        // คำนวณคะแนนรวม 5 ด้าน (แทน “การสื่อสาร” เป็น “ทำงานร่วมกับผู้อื่น”)
+        // คำนวณคะแนนรวม 5 ด้าน
         const CH2 = 8;
-        for (let i = 0; i < ids.length; i += CH2) {
-          const chunk = ids.slice(i, i + CH2);
+        for (let i = 0; i < all.length; i += CH2) {
+          const chunk = all.slice(i, i + CH2).map(u => u.id);
           const enriched = await Promise.allSettled(
             chunk.map(async (id) => {
               const prof = await getCompetencyProfile(id);
@@ -239,11 +267,11 @@ export default function StudentInfoPage() {
               const socialResp = await listActivities(id, "social").catch(() => ({ items: [] }));
 
               const cept = langs?.CEPT ?? null;
-              const langScore = scoreLang(cept?.level)?.score ?? 0;               // ✅ ใช้ CEPT ล่าสุด
+              const langScore = scoreLang(cept?.level)?.score ?? 0;
               const ictPct = Number(langs?.ICT?.score_raw ?? 0);
               const itpePct = Number(langs?.ITPE?.score_raw ?? 0);
 
-              const trainingsArr = toArray(trainingsResp?.items || trainingsResp); // ✅ รองรับสองรูปแบบ
+              const trainingsArr = toArray(trainingsResp?.items || trainingsResp);
               const techScore = scoreTech(trainingsArr.length, ictPct, itpePct, cept)?.score ?? 0;
 
               const socialActs = toArray(socialResp?.items || socialResp);
@@ -258,24 +286,50 @@ export default function StudentInfoPage() {
               const pAcad = tmp.each?.acad ?? 0;
               const pLang = tmp.each?.lang ?? 0;
               const pTech = tmp.each?.tech ?? 0;
-              const pSoc  = tmp.each?.social ?? 0;
+              const pSoc = tmp.each?.social ?? 0;
 
               // ===== Collaboration (peer + self) =====
               let peerAvg = 0, selfAvg = 0, peerCount = 0;
               try {
-                const rec = await peer.received(id, periodKey);
-                const sum = extractPeerSummary(rec);
+                // ดึงตามรอบ
+                let rec = await peer.received(id, periodKey);
+                let sum = extractPeerSummary(rec);
                 peerAvg = sum.peerAvg;
                 peerCount = sum.peerCount;
-              } catch {}
-              try {
-                const self = await (peer.self ? peer.self(id, periodKey) : peer.given(id, periodKey));
-                // self.avg ควรเป็น 0..100 อยู่แล้ว (หรือ 1..5 ให้ normalize)
-                const s = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
-                selfAvg = s <= 5 ? normalizePeerScore(s) : Math.max(0, Math.min(100, s));
-              } catch {}
 
-              const { score: collabScore } = scoreCollaboration({ self: selfAvg, peerAvg }); // ✅ Peer 80 : Self 20
+                // ✅ ตรวจสอบว่าข้อมูลที่ได้ตรงรอบหรือไม่ ถ้า periodKey mismatch ให้ fallback
+                if ((!peerCount || peerAvg === 0) && rec?.period_key !== periodKey) {
+                  rec = await peer.received(id, null);
+                  sum = extractPeerSummary(rec);
+                  peerAvg = sum.peerAvg;
+                  peerCount = sum.peerCount;
+                }
+
+                // DEBUG ชั่วคราว
+                console.log("peer", id, { periodKey, got: rec?.period_key, peerAvg, peerCount });
+              } catch { }
+              try {
+                // backend บางที่อาจไม่มี self() → fallback เป็น given()
+                let self = await (peer.self ? peer.self(id, periodKey) : peer.given(id, periodKey));
+                let s = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+                if (!Number.isFinite(s) && self?.summary?.avg) {
+                  const m15 = avgFromTopicObject(self.summary.avg);
+                  if (m15 != null) s = m15; // 1..5
+                }
+                selfAvg = normalizePeerScore(s);
+                // Fallback: ถ้ายัง 0 ลองไม่ระบุ period
+                if (selfAvg === 0) {
+                  self = await (peer.self ? peer.self(id, null) : peer.given(id, null));
+                  let s2 = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+                  if (!Number.isFinite(s2) && self?.summary?.avg) {
+                    const m152 = avgFromTopicObject(self.summary.avg);
+                    if (m152 != null) s2 = m152;
+                  }
+                  selfAvg = normalizePeerScore(s2);
+                }
+              } catch { }
+
+              const collabScore = computeCollabScore(peerAvg, selfAvg); // ✅ 0..100
 
               // รวม 5 ด้านแบบถ่วงเท่ากัน
               const each = { acad: pAcad, lang: pLang, tech: pTech, social: pSoc, collab: collabScore };
@@ -340,6 +394,43 @@ export default function StudentInfoPage() {
     });
   }, [accounts, majorNameById, filterDept, filterYear, search, enrich]);
 
+  /* ===== เรียงคะแนนจากมากไปน้อย (ไม่มีคะแนนจะไปท้ายสุด) ===== */
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      const sa = Number(enrich[a.id]?.total_competency);
+      const sb = Number(enrich[b.id]?.total_competency);
+      const va = Number.isFinite(sa) ? sa : Number.NEGATIVE_INFINITY; // ไม่มีคะแนน → ดันท้าย
+      const vb = Number.isFinite(sb) ? sb : Number.NEGATIVE_INFINITY;
+      return vb - va; // มาก → น้อย
+    });
+    return arr;
+  }, [filtered, enrich]);
+
+  /* ===== สรุปคะแนนตามตัวกรอง + แยกตามสาขา/ชั้นปี ===== */
+  const stats = useMemo(() => {
+    let count = 0, sum = 0, min = Infinity, max = -Infinity;
+    const groups = {};
+    sorted.forEach((acc) => {
+      const score = Number(enrich[acc.id]?.total_competency);
+      if (!Number.isFinite(score)) return;
+      count++; sum += score;
+      if (score < min) min = score;
+      if (score > max) max = score;
+      const dep = majorNameById[acc.major_id] || "—";
+      const year = enrich[acc.id]?.year_level ?? acc.year_level ?? 0;
+      const key = `${dep}::${year}`;
+      if (!groups[key]) groups[key] = { dep, year, count: 0, sum: 0 };
+      groups[key].count += 1;
+      groups[key].sum += score;
+    });
+    const avg = count ? +(sum / count).toFixed(2) : 0;
+    const groupRows = Object.values(groups)
+      .map((g) => ({ ...g, avg: +(g.sum / g.count).toFixed(2) }))
+      .sort((a, b) => a.dep.localeCompare(b.dep, "th") || a.year - b.year);
+    return { count, sum: Math.round(sum), min: count ? min : 0, max: count ? max : 0, avg, groups: groupRows };
+  }, [sorted, enrich, majorNameById]);
+
   /* ======================= Modal ======================= */
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailAccount, setDetailAccount] = useState(null);
@@ -348,11 +439,11 @@ export default function StudentInfoPage() {
     profile: null,
     languages: null,
     trainings: [],
-    activities: { social: [] }, // ไม่มี communication แล้ว
+    activities: { social: [] },
     radar: null,
     calc: null,
     requiredAll: [],
-    collab: null, // เก็บสรุป collaboration สำหรับ modal
+    collab: null,
   });
   const modalRef = useRef(null);
 
@@ -363,35 +454,24 @@ export default function StudentInfoPage() {
       scoreCore15: avgCore15 ?? 0,
     });
     const acadScore = acadObj.score;
-
     const cept = languages?.CEPT ?? null;
     const langScore = scoreLang(cept?.level)?.score ?? 0;
-
     const ictPct = Number(languages?.ICT?.score_raw ?? 0);
     const itpePct = Number(languages?.ITPE?.score_raw ?? 0);
-
     const trainingsArr = toArray(trainings?.items || trainings);
     const techScore = scoreTech(trainingsArr.length, ictPct, itpePct, cept)?.score ?? 0;
-
     const socialActs = toArray(activities?.social);
 
     const tmp = calcAllCompetencies({
-      acadScore,                     // /40
-      langScore,                     // /20
-      techScore,                     // /20
-      socialActs,                    // hours → points → %
-      commActs: [],                  // ไม่ใช้ communication
+      acadScore, langScore, techScore, socialActs, commActs: [],
     });
-    const pAcad = tmp.each?.acad ?? 0;   // 0–100
-    const pLang = tmp.each?.lang ?? 0;   // 0–100
-    const pTech = tmp.each?.tech ?? 0;   // 0–100
-    const pSoc  = tmp.each?.social ?? 0; // 0–100
+    const pAcad = tmp.each?.acad ?? 0;
+    const pLang = tmp.each?.lang ?? 0;
+    const pTech = tmp.each?.tech ?? 0;
+    const pSoc = tmp.each?.social ?? 0;
 
-    // ===== Collaboration (modal) — ใช้สูตรเดียวกัน =====
-    const { score: collabScore } = scoreCollaboration({
-      peerAvg: collab?.peerAvg || 0,
-      self:    collab?.selfAvg || 0,
-    });
+    // ✅ ทำงานร่วมกับผู้อื่น 0..100
+    const collabScore = computeCollabScore(collab?.peerAvg || 0, collab?.selfAvg || 0);
 
     const each = { acad: pAcad, lang: pLang, tech: pTech, social: pSoc, collab: collabScore };
     const total = Math.round((each.acad + each.lang + each.tech + each.social + each.collab) / 5);
@@ -441,14 +521,12 @@ export default function StudentInfoPage() {
       const avgGpa25 = n ? +(sumGpa25 / n).toFixed(2) : 0;
       const avgCore15 = n ? +(sumCore15 / n).toFixed(2) : 0;
 
-      /* ===== ดึงเกรด "ทั้งหมด" ทีเดียว (ไม่ส่ง year/sem) ===== */
+      // เกรดทั้งหมด (ไม่ส่ง year/sem)
       const allGradesResp = await listCourseGrades(acc.id).catch(() => null);
       let gmapAll = {};
-      if (allGradesResp?.map && typeof allGradesResp.map === "object") {
-        gmapAll = allGradesResp.map;
-      } else if (allGradesResp?.grades && typeof allGradesResp.grades === "object") {
-        gmapAll = allGradesResp.grades;
-      } else if (Array.isArray(allGradesResp?.items)) {
+      if (allGradesResp?.map && typeof allGradesResp.map === "object") gmapAll = allGradesResp.map;
+      else if (allGradesResp?.grades && typeof allGradesResp.grades === "object") gmapAll = allGradesResp.grades;
+      else if (Array.isArray(allGradesResp?.items)) {
         for (const it of allGradesResp.items) {
           const k = it.course_code || it.code;
           if (k) gmapAll[String(k).trim()] = it.letter || it.grade || it.grade_letter || it.result || null;
@@ -465,9 +543,7 @@ export default function StudentInfoPage() {
             const gradeRaw = pickGradeByCode(gmapAll, c.code);
             const grade = normalizeGrade(gradeRaw);
             requiredRows.push({
-              year: y,
-              sem: s,
-              code: c.code,
+              year: y, sem: s, code: c.code,
               name_th: c.name_th || c.name_en || "-",
               credit: c.credit ?? "-",
               grade,
@@ -477,41 +553,49 @@ export default function StudentInfoPage() {
         }
       }
 
-      // สรุป Collaboration สำหรับ modal
+      // Collaboration summary (modal) + fallback
       let peerAvg = 0, selfAvg = 0, peerCount = 0;
       try {
-        const rec = await peer.received(acc.id, periodKey);
-        const sum = extractPeerSummary(rec);
+        let rec = await peer.received(acc.id, periodKey);
+        let sum = extractPeerSummary(rec);
         peerAvg = sum.peerAvg;
         peerCount = sum.peerCount;
-      } catch {}
+        if (!peerCount) {
+          rec = await peer.received(acc.id, null);
+          sum = extractPeerSummary(rec);
+          peerAvg = sum.peerAvg;
+          peerCount = sum.peerCount;
+        }
+      } catch { }
       try {
-        const self = await (peer.self ? peer.self(acc.id, periodKey) : peer.given(acc.id, periodKey));
-        const s = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
-        selfAvg = s <= 5 ? normalizePeerScore(s) : Math.max(0, Math.min(100, s));
-      } catch {}
+        let self = await (peer.self ? peer.self(acc.id, periodKey) : peer.given(acc.id, periodKey));
+        let s = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+        if (!Number.isFinite(s) && self?.summary?.avg) {
+          const m15 = avgFromTopicObject(self.summary.avg);
+          if (m15 != null) s = m15;
+        }
+        selfAvg = normalizePeerScore(s);
+        if (selfAvg === 0) {
+          self = await (peer.self ? peer.self(acc.id, null) : peer.given(acc.id, null));
+          let s2 = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+          if (!Number.isFinite(s2) && self?.summary?.avg) {
+            const m152 = avgFromTopicObject(self.summary.avg);
+            if (m152 != null) s2 = m152;
+          }
+          selfAvg = normalizePeerScore(s2);
+        }
+      } catch { }
       const collabSummary = { peerAvg, selfAvg, peerCount, periodKey };
 
       const profile = { ...profileRaw };
       const { radar, calc } = buildCalc({
-        profile,
-        languages,
-        trainings,
-        activities: { social },
-        avgGpa25,
-        avgCore15,
-        collab: collabSummary,
+        profile, languages, trainings, activities: { social },
+        avgGpa25, avgCore15, collab: collabSummary,
       });
 
       setDetail({
-        profile,
-        languages,
-        trainings,
-        activities: { social },
-        radar,
-        calc,
-        requiredAll: requiredRows,
-        collab: collabSummary,
+        profile, languages, trainings, activities: { social },
+        radar, calc, requiredAll: requiredRows, collab: collabSummary,
       });
     } catch (e) {
       console.error(e);
@@ -630,12 +714,66 @@ export default function StudentInfoPage() {
             ) : error ? (
               <div className="alert alert-danger">{error}</div>
             ) : (
-              <div className="text-muted small mb-2">พบ {filtered.length.toLocaleString("th-TH")} รายการ</div>
+              <div className="text-muted small mb-2">พบ {sorted.length.toLocaleString("th-TH")} รายการ</div>
+            )}
+
+            {/* ===== Summary after filters ===== */}
+            {!loading && !error && (
+              <div className="card border-0 shadow-sm rounded-4 mb-3 glassy">
+                <div className="card-body">
+                  <div className="d-flex flex-wrap gap-3 align-items-center">
+                    <h6 className="mb-0 me-auto">สรุปคะแนน (หลังตัวกรอง)</h6>
+                    <div className="small text-muted">
+                      จำนวนนิสิต: <b>{stats.count.toLocaleString("th-TH")}</b>
+                    </div>
+                    <div className="small text-muted">
+                      ผลรวมคะแนน: <b>{stats.sum.toLocaleString("th-TH")}</b>
+                    </div>
+                    <div className="small text-muted">
+                      เฉลี่ย: <b>{stats.avg}</b>
+                    </div>
+                    <div className="small text-muted">
+                      ต่ำสุด: <b>{stats.min}</b>
+                    </div>
+                    <div className="small text-muted">
+                      สูงสุด: <b>{stats.max}</b>
+                    </div>
+                  </div>
+
+                  {/* ตารางสรุปตามสาขา/ชั้นปี */}
+                  {stats.groups.length > 0 && (
+                    <div className="table-responsive mt-3">
+                      <table className="table table-sm align-middle mb-0">
+                        <thead>
+                          <tr>
+                            <th style={{ width: '40%' }}>สาขา</th>
+                            <th style={{ width: 80 }}>ชั้นปี</th>
+                            <th style={{ width: 120 }}>จำนวน</th>
+                            <th style={{ width: 160 }}>ผลรวมคะแนน</th>
+                            <th style={{ width: 120 }}>เฉลี่ย</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stats.groups.map((g) => (
+                            <tr key={`${g.dep}-${g.year}`}>
+                              <td>{g.dep}</td>
+                              <td>{g.year}</td>
+                              <td>{g.count.toLocaleString("th-TH")}</td>
+                              <td>{g.sum.toLocaleString("th-TH")}</td>
+                              <td>{g.avg}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
             {/* Cards */}
             <div className="row g-4">
-              {filtered.map((acc) => {
+              {sorted.map((acc) => {
                 const depName = majorNameById[acc.major_id] || "";
                 const bannerGrad =
                   depName === "วิทยาการคอมพิวเตอร์"
@@ -886,7 +1024,7 @@ export default function StudentInfoPage() {
                                         <tr key={`${row.year}-${row.sem}-${row.code}`}>
                                           <td>{row.year}</td>
                                           <td>{row.sem}</td>
-                                          <td className="text-monospace">{row.code}</td>
+                                          <td className="font-monospace">{row.code}</td>
                                           <td>{row.name_th}</td>
                                           <td>{row.credit}</td>
                                           <td>{normalizeGrade(row.grade) ?? "—"}</td>

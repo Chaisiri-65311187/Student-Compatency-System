@@ -1,7 +1,7 @@
 // backend/routes/competency.js
 // ------------------------------------------------------------------
 // Competency API (โปรไฟล์, วิชาบังคับ, เกรดรายวิชา, ภาษา, เทคฯ,
-// กิจกรรม, และสรุปคะแนนด้านวิชาการ) — ใช้ร่วมกับ backend/db.js
+// กิจกรรม, และสรุปคะแนนด้านวิชาการ)
 // ------------------------------------------------------------------
 
 const express = require("express");
@@ -41,8 +41,7 @@ function normalizeYear(y) {
   return year;
 }
 
-// คำนวณ GPA จาก student_course_grades
-// - ไม่นับวิชาที่ letter เป็น null / S / U
+// คำนวณ GPA จาก student_course_grades (ไม่นับ S/U/ว่าง)
 async function computeGPA(accountId) {
   const gradeMap = await loadGradeScaleMap();
   const [rows] = await pool.query(
@@ -57,24 +56,17 @@ async function computeGPA(accountId) {
   for (const r of rows) {
     const letter = r.letter;
     const credit = Number(r.credit || 0);
-
-    // ข้ามกรณีไม่มีเกรดและ S/U
     if (!letter || letter === "S" || letter === "U") continue;
-
     const gp = gradeMap[letter];
     if (gp == null) continue;
-
     sumPoints += gp * credit;
     sumCredits += credit;
   }
-
   if (!sumCredits) return null;
   return Math.round((sumPoints / sumCredits) * 100) / 100;
 }
 
-// คำนวณ % ผ่านวิชาบังคับของสาขา/ปี/เทอม (เดิม)
-// - เกณฑ์ผ่าน: letter === 'S' หรือ (มี point >= 1.0)
-// - U/null ไม่ผ่าน
+// % ผ่านวิชาบังคับของสาขา/ปี/เทอม (ผ่าน = S หรือแต้ม >= 1.0, ไม่ผ่าน = U/ว่าง)
 async function computeCoreCompletionPct(accountId, majorId, yearLevel, semester) {
   const gradeMap = await loadGradeScaleMap();
   const [reqRows] = await pool.query(
@@ -98,10 +90,10 @@ async function computeCoreCompletionPct(accountId, majorId, yearLevel, semester)
     got
       .filter((g) => {
         const L = g.letter;
-        if (!L) return false;          // ยังไม่ออก
-        if (L === "S") return true;    // S = ผ่าน
-        if (L === "U") return false;   // U = ไม่ผ่าน
-        return (gradeMap[L] ?? 0) >= 1.0; // เกรดปกติ: D ขึ้นไปผ่าน (>=1.0)
+        if (!L) return false;
+        if (L === "S") return true;
+        if (L === "U") return false;
+        return (gradeMap[L] ?? 0) >= 1.0;
       })
       .map((g) => g.course_id)
   );
@@ -111,22 +103,16 @@ async function computeCoreCompletionPct(accountId, majorId, yearLevel, semester)
   return Math.round(pct * 100) / 100;
 }
 
-/** ✅ ใหม่: คำนวณ % ผ่านวิชาบังคับ "รวมทุกชั้นปี" ของสาขา */
+/** % ผ่านวิชาบังคับรวมทุกชั้นปีของสาขา */
 async function computeCoreCompletionPctAll(accountId, majorId) {
   const gradeMap = await loadGradeScaleMap();
-
-  // 1) ดึงรายวิชาบังคับทั้งหมดของสาขา
   const [reqRows] = await pool.query(
-    `SELECT mrc.course_id
-     FROM major_required_courses mrc
-     WHERE mrc.major_id = ?`,
+    `SELECT mrc.course_id FROM major_required_courses mrc WHERE mrc.major_id = ?`,
     [majorId]
   );
   if (!reqRows.length) return 0;
 
   const courseIds = reqRows.map(r => r.course_id);
-
-  // 2) ดึงเกรดของนิสิตเฉพาะวิชาเหล่านี้ (ทุกปี/เทอม)
   const placeholders = courseIds.map(() => "?").join(",");
   const [grades] = await pool.query(
     `SELECT scg.course_id, scg.letter
@@ -136,7 +122,6 @@ async function computeCoreCompletionPctAll(accountId, majorId) {
     [accountId, ...courseIds]
   );
 
-  // 3) นับวิชาที่ "ผ่าน" (กันนับซ้ำด้วย Set)
   const passedSet = new Set(
     grades.filter(g => {
       const L = g.letter;
@@ -148,10 +133,10 @@ async function computeCoreCompletionPctAll(accountId, majorId) {
   );
 
   const pct = (passedSet.size / reqRows.length) * 100;
-  return Math.round(pct * 100) / 100; // ปัดทศนิยม 2 ตำแหน่ง
+  return Math.round(pct * 100) / 100;
 }
 
-// GPA → คะแนน (0..25)
+// GPA → คะแนน /25
 function scoreFromGPA(gpa) {
   if (gpa == null) return 0;
   const x = Number(gpa);
@@ -166,9 +151,9 @@ function scoreFromGPA(gpa) {
 }
 
 /* -------------------------------------------
- * Health Check
+ * Health
  * -----------------------------------------*/
-router.get("/ping", (req, res) => res.json({ ok: true, scope: "competency" }));
+router.get("/ping", (_req, res) => res.json({ ok: true, scope: "competency" }));
 
 /* -------------------------------------------
  * 1) Profile summary
@@ -178,7 +163,6 @@ router.get("/profile/:accountId", async (req, res) => {
   if (!accountId) return res.status(400).json({ message: "invalid accountId" });
 
   try {
-    // ✅ ดึงข้อมูลโปรไฟล์ + ช่องทางติดต่อครบ
     const [[acct]] = await pool.query(
       `SELECT 
          id, username, full_name, first_name, last_name,
@@ -188,20 +172,14 @@ router.get("/profile/:accountId", async (req, res) => {
        WHERE id=?`,
       [accountId]
     );
-
     if (!acct) return res.status(404).json({ message: "account not found" });
 
-    // ✅ ทำให้ URL รูปโปรไฟล์เป็นลิงก์เต็ม (ไม่งั้น React จะโหลดไม่เจอ)
     if (acct.avatar_url && !acct.avatar_url.startsWith("http")) {
       acct.avatar_url = `${req.protocol}://${req.get("host")}${acct.avatar_url}`;
     }
 
     const computed_gpa = await computeGPA(accountId);
-
-    res.json({
-      account: acct,
-      computed_gpa,
-    });
+    res.json({ account: acct, computed_gpa });
   } catch (e) {
     console.error("GET /profile error", e);
     res.status(500).json({ message: "Server error" });
@@ -314,17 +292,12 @@ router.post("/courses/grades/bulk", async (req, res) => {
 
       const course_id = crs[0].id;
 
-      // แปลงค่าตามสเปค
       let letter = it.letter === "" ? null : it.letter;
-      if (letter && !VALID_LETTERS.includes(letter)) {
-        // ถ้าไม่ใช่เกรดที่รู้จัก ให้เก็บเป็น null (กัน error)
-        letter = null;
-      }
+      if (letter && !VALID_LETTERS.includes(letter)) letter = null;
 
       const taken_year = normalizeYear(it.year ?? null);
       const taken_semester = [1, 2].includes(Number(it.semester)) ? Number(it.semester) : null;
 
-      // ล้างของเดิมแล้วค่อย insert (คงพฤติกรรมเดิม)
       await conn.query(
         "DELETE FROM student_course_grades WHERE account_id=? AND course_id=?",
         [account_id, course_id]
@@ -347,8 +320,10 @@ router.post("/courses/grades/bulk", async (req, res) => {
 });
 
 /* -------------------------------------------
- * 4) ภาษา (CEPT)
+ * 4) ภาษา (CEPT/ICT/ITPE)
  * -----------------------------------------*/
+
+// ล่าสุดของ framework (ค่าเริ่มต้น CEPT)
 router.get("/language/latest/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
   const framework = (req.query.framework || "CEPT").toUpperCase();
@@ -370,23 +345,25 @@ router.get("/language/latest/:accountId", async (req, res) => {
   }
 });
 
-// ✅ ใหม่: ดึง "ล่าสุดต่อ framework" ทั้ง 3 อย่างในคำขอเดียว
-// GET /api/competency/language/latest-all/:accountId
+// ล่าสุดต่อ framework ทั้งหมด
 router.get("/language/latest-all/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
   if (!accountId) return res.status(400).json({ message: "invalid accountId" });
   try {
     const [rows] = await pool.query(
-      `SELECT s1.framework, s1.level, s1.taken_at, s1.score_raw
+      `SELECT s1.id, s1.framework, s1.level, s1.taken_at, s1.score_raw
        FROM student_language_results s1
        JOIN (
-         SELECT framework, MAX(CONCAT(IFNULL(DATE_FORMAT(taken_at,'%Y%m%d'), '00000000'), LPAD(id,10,'0'))) AS max_key
+         SELECT framework,
+                MAX(CONCAT(IFNULL(DATE_FORMAT(taken_at,'%Y%m%d'), '00000000'),
+                           LPAD(id,10,'0'))) AS max_key
          FROM student_language_results
          WHERE account_id=?
          GROUP BY framework
        ) x
-       ON s1.framework=x.framework
-       AND CONCAT(IFNULL(DATE_FORMAT(s1.taken_at,'%Y%m%d'), '00000000'), LPAD(s1.id,10,'0'))=x.max_key
+       ON s1.framework = x.framework
+      AND CONCAT(IFNULL(DATE_FORMAT(s1.taken_at,'%Y%m%d'), '00000000'),
+                 LPAD(s1.id,10,'0')) = x.max_key
        WHERE s1.account_id=?`,
       [accountId, accountId]
     );
@@ -399,33 +376,61 @@ router.get("/language/latest-all/:accountId", async (req, res) => {
   }
 });
 
+// ✅ บันทึก/อัปเดตภาษา — ตัด updated_at ออกแล้ว (ไม่ใช้ ON DUPLICATE ที่มี updated_at)
 router.post("/language", async (req, res) => {
-  const { account_id, framework, level, taken_at, score_raw } = req.body || {};
-  // ✅ ไม่บังคับ level แล้ว
+  const { account_id, framework, level, taken_at, score_raw, id } = req.body || {};
   if (!account_id || !framework) {
     return res.status(400).json({ message: "account_id และ framework จำเป็น" });
   }
-
   try {
-    await pool.query(
+    // ถ้ามี id → update แถวนั้น
+    if (id) {
+      await pool.query(
+        `UPDATE student_language_results
+         SET level=?, taken_at=?, score_raw=?
+         WHERE id=? AND account_id=? AND framework=?`,
+        [level ?? null, taken_at ?? null, score_raw ?? null, id, account_id, framework]
+      );
+      return res.json({ ok: true, mode: "update", id });
+    }
+
+    // ไม่มี id → อัปเดตแถวล่าสุดของ framework นั้น ถ้าไม่มีจึง insert ใหม่
+    const [[last]] = await pool.query(
+      `SELECT id FROM student_language_results
+       WHERE account_id=? AND framework=?
+       ORDER BY taken_at DESC, id DESC
+       LIMIT 1`,
+      [account_id, framework]
+    );
+
+    if (last) {
+      await pool.query(
+        `UPDATE student_language_results
+         SET level=?, taken_at=?, score_raw=?
+         WHERE id=?`,
+        [level ?? null, taken_at ?? null, score_raw ?? null, last.id]
+      );
+      return res.json({ ok: true, mode: "update", id: last.id });
+    }
+
+    const [r] = await pool.query(
       `INSERT INTO student_language_results
-       (account_id, framework, level, taken_at, score_raw)
-       VALUES (?,?,?,?,?)` ,
+         (account_id, framework, level, taken_at, score_raw)
+       VALUES (?,?,?,?,?)`,
       [account_id, framework, level ?? null, taken_at ?? null, score_raw ?? null]
     );
-    res.json({ ok: true });
+    return res.json({ ok: true, mode: "insert", id: r.insertId });
   } catch (e) {
     console.error("POST /language error", e);
-    // กันเคสตารางยังไม่พร้อม
     if (e?.code === "ER_NO_SUCH_TABLE" || e?.sqlState === "42S02") {
       return res.status(400).json({ message: "table student_language_results not found" });
     }
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error" });
   }
 });
 
 /* -------------------------------------------
- * 5) ใบรับรอง/อบรม (Tech)
+ * 5) Tech (certifications & trainings)
  * -----------------------------------------*/
 router.get("/tech/certs/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
@@ -463,8 +468,31 @@ router.post("/tech/certs", async (req, res) => {
   }
 });
 
+// Trainings
+router.get("/tech/trainings/:accountId", async (req, res) => {
+  const accountId = Number(req.params.accountId || 0);
+  if (!accountId) return res.status(400).json({ message: "invalid accountId" });
+  try {
+    const [rows] = await pool.query(
+      `SELECT st.id, t.title, t.provider, t.hours, st.taken_at, st.proof_url
+       FROM student_trainings st
+       JOIN trainings t ON t.id = st.training_id
+       WHERE st.account_id=? 
+       ORDER BY st.taken_at DESC, t.title`,
+      [accountId]
+    );
+    res.json({ items: rows });
+  } catch (e) {
+    if (e?.code === "ER_NO_SUCH_TABLE" || e?.sqlState === "42S02") {
+      return res.json({ items: [] });
+    }
+    console.error("GET /tech/trainings error", e);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 /* -------------------------------------------
- * 6) กิจกรรมสังคม/สื่อสาร
+ * 6) Activities
  * -----------------------------------------*/
 router.get("/activities/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
@@ -503,22 +531,56 @@ router.post("/activities", async (req, res) => {
   }
 });
 
+router.put("/activities/:id", async (req, res) => {
+  const id = Number(req.params.id || 0);
+  const { account_id, category, subtype, title, role, hours, date_from, date_to, proof_url } = req.body || {};
+  if (!id || !account_id || !title) {
+    return res.status(400).json({ message: "id, account_id, title required" });
+  }
+  try {
+    const [r] = await pool.query(
+      `UPDATE student_activities
+         SET category=?, subtype=?, title=?, role=?, hours=?, date_from=?, date_to=?, proof_url=?
+       WHERE id=? AND account_id=?`,
+      [category ?? null, subtype ?? null, title, role ?? null, hours ?? null,
+      date_from ?? null, date_to ?? null, proof_url ?? null, id, account_id]
+    );
+    if (r.affectedRows === 0) return res.status(404).json({ message: "activity not found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("PUT /activities/:id error", e);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+router.delete("/activities/:id", async (req, res) => {
+  const id = Number(req.params.id || 0);
+  const account_id = Number(req.query.account_id || 0);
+  if (!id || !account_id) {
+    return res.status(400).json({ message: "id and account_id required" });
+  }
+  try {
+    const [r] = await pool.query(
+      `DELETE FROM student_activities WHERE id=? AND account_id=?`,
+      [id, account_id]
+    );
+    if (r.affectedRows === 0) return res.status(404).json({ message: "activity not found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /activities/:id error", e);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 /* -------------------------------------------
  * 7) สรุปคะแนนด้านวิชาการ (GPA + Core)
- *    - year/sem: เป็น optional แล้ว
- *      • ถ้าส่ง → คิดเฉพาะปี/เทอม
- *      • ถ้าไม่ส่ง → คิดรวมทุกชั้นปี (แก้เคสที่ขึ้น 0% ตลอด)
  * -----------------------------------------*/
 router.post("/recalculate/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
-
-  // เดิมบังคับ year/sem → เปลี่ยนเป็น optional
   const yearLevel = req.query.year != null ? Number(req.query.year) : null;
-  const semester  = req.query.sem  != null ? Number(req.query.sem)  : null;
+  const semester = req.query.sem != null ? Number(req.query.sem) : null;
 
-  if (!accountId) {
-    return res.status(400).json({ message: "accountId required" });
-  }
+  if (!accountId) return res.status(400).json({ message: "accountId required" });
 
   try {
     const [[acct]] = await pool.query(
@@ -533,28 +595,24 @@ router.post("/recalculate/:accountId", async (req, res) => {
       : (computed_gpa ?? null);
     const score_gpa = scoreFromGPA(gpaUsed);
 
-    // ✅ ใช้สูตรรวมทุกชั้นปีเมื่อไม่ส่ง year/sem
-    let core_completion_pct = 0;
-    if (Number.isFinite(yearLevel) && Number.isFinite(semester) && yearLevel && semester) {
-      core_completion_pct = await computeCoreCompletionPct(accountId, acct.major_id, yearLevel, semester);
-    } else {
-      core_completion_pct = await computeCoreCompletionPctAll(accountId, acct.major_id);
-    }
+    const core_completion_pct = (Number.isFinite(yearLevel) && Number.isFinite(semester) && yearLevel && semester)
+      ? await computeCoreCompletionPct(accountId, acct.major_id, yearLevel, semester)
+      : await computeCoreCompletionPctAll(accountId, acct.major_id);
 
     const score_core = Math.round(Math.min(1, core_completion_pct / 100) * 15 * 100) / 100;
     const score_academic = Math.round((score_gpa + score_core) * 100) / 100;
 
     res.json({
       account_id: accountId,
-      year_level: yearLevel,           // อาจเป็น null ถ้าไม่ส่ง
-      semester,                        // อาจเป็น null ถ้าไม่ส่ง
+      year_level: yearLevel,
+      semester,
       manual_gpa: acct.manual_gpa ?? null,
       computed_gpa,
       gpa_used: gpaUsed,
-      score_gpa,                       // /25
-      core_completion_pct,             // ✅ จะไม่ 0% ถ้ามีวิชาที่ผ่านจริงแม้ต่างปี/เทอม
-      score_core,                      // /15
-      score_academic,                  // /40 (เดิม)
+      score_gpa,           // /25
+      core_completion_pct, // %
+      score_core,          // /15
+      score_academic,      // /40
     });
   } catch (e) {
     console.error("POST /recalculate error", e);
@@ -562,98 +620,59 @@ router.post("/recalculate/:accountId", async (req, res) => {
   }
 });
 
-// ✅ Training list
-router.get("/tech/trainings/:accountId", async (req, res) => {
+/* -------------------------------------------
+ * 8) Peer Evaluation (เข้ากับ schema จริง)
+ * -----------------------------------------*/
+router.get("/peer/received/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
-  if (!accountId) return res.status(400).json({ message: "invalid accountId" });
+  const period = req.query.period || null;
+  if (!accountId) return res.status(400).json({ message: "accountId required" });
+
   try {
+    // ค่าเฉลี่ยจากเพื่อน (is_self = 0)
     const [rows] = await pool.query(
-      `SELECT st.id, t.title, t.provider, t.hours, st.taken_at, st.proof_url
-       FROM student_trainings st
-       JOIN trainings t ON t.id = st.training_id
-       WHERE st.account_id=? 
-       ORDER BY st.taken_at DESC, t.title`,
-      [accountId]
+      `SELECT 
+         AVG((communication + teamwork + responsibility + cooperation + adaptability)/5) AS avg_score,
+         COUNT(*) AS count
+       FROM peer_evaluations
+       WHERE ratee_id = ? ${period ? "AND period_key = ?" : ""} AND is_self = 0`,
+      period ? [accountId, period] : [accountId]
     );
-    res.json({ items: rows });
-  } catch (e) {
-    // ถ้า table ยังไม่มี ให้ตอบลิสต์ว่างแทน (กันพังช่วง dev)
-    if (e?.code === "ER_NO_SUCH_TABLE" || e?.sqlState === "42S02") {
-      return res.json({ items: [] });
-    }
-    console.error("GET /tech/trainings error", e);
-    res.status(500).json({ message: "Server error" });
-  }
-});
 
-// ✅ เพิ่ม training
-router.post("/tech/trainings", async (req, res) => {
-  const { account_id, training_id, taken_at, proof_url } = req.body || {};
-  if (!account_id || !training_id) {
-    return res.status(400).json({ message: "account_id, training_id required" });
-  }
-  try {
-    await pool.query(
-      `INSERT INTO student_trainings (account_id, training_id, taken_at, proof_url)
-       VALUES (?,?,?,?)
-       ON DUPLICATE KEY UPDATE taken_at=VALUES(taken_at), proof_url=VALUES(proof_url)`,
-      [account_id, training_id, taken_at ?? null, proof_url ?? null]
-    );
-    res.json({ ok: true });
+    const avg = Number(rows?.[0]?.avg_score ?? 0) || 0;
+    const count = Number(rows?.[0]?.count ?? 0) || 0;
+    res.json({ avg, count });
   } catch (e) {
     if (e?.code === "ER_NO_SUCH_TABLE" || e?.sqlState === "42S02") {
-      return res.status(400).json({ message: "table trainings/student_trainings not found" });
+      return res.json({ avg: 0, count: 0 });
     }
-    console.error("POST /tech/trainings error", e);
+    console.error("GET /peer/received error", e);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// PUT /api/competency/activities/:id   (แก้ไขกิจกรรม)
-router.put("/activities/:id", async (req, res) => {
-  const id = Number(req.params.id || 0);
-  const {
-    account_id, // ป้องกันแก้ของคนอื่น — ต้องส่งมาด้วย
-    category, subtype, title, role, hours, date_from, date_to, proof_url,
-  } = req.body || {};
-  if (!id || !account_id || !title) {
-    return res.status(400).json({ message: "id, account_id, title required" });
-  }
-  try {
-    const [r] = await pool.query(
-      `UPDATE student_activities
-         SET category=?, subtype=?, title=?, role=?, hours=?, date_from=?, date_to=?, proof_url=?
-       WHERE id=? AND account_id=?`,
-      [
-        category ?? null, subtype ?? null, title, role ?? null,
-        hours ?? null, date_from ?? null, date_to ?? null, proof_url ?? null,
-        id, account_id
-      ]
-    );
-    if (r.affectedRows === 0) return res.status(404).json({ message: "activity not found" });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("PUT /activities/:id error", e);
-    res.status(500).json({ message: "Server error" });
-  }
-});
+router.get("/peer/self/:accountId", async (req, res) => {
+  const accountId = Number(req.params.accountId || 0);
+  const period = req.query.period || null;
+  if (!accountId) return res.status(400).json({ message: "accountId required" });
 
-// DELETE /api/competency/activities/:id   (ลบกิจกรรม)
-router.delete("/activities/:id", async (req, res) => {
-  const id = Number(req.params.id || 0);
-  const account_id = Number(req.query.account_id || 0); // กันลบข้ามบัญชี
-  if (!id || !account_id) {
-    return res.status(400).json({ message: "id and account_id required" });
-  }
   try {
-    const [r] = await pool.query(
-      `DELETE FROM student_activities WHERE id=? AND account_id=?`,
-      [id, account_id]
+    // ค่าเฉลี่ย self (is_self = 1)
+    const [rows] = await pool.query(
+      `SELECT 
+         AVG((communication + teamwork + responsibility + cooperation + adaptability)/5) AS avg_score
+       FROM peer_evaluations
+       WHERE ratee_id = ? AND rater_id = ? ${period ? "AND period_key = ?" : ""} AND is_self = 1`,
+      period ? [accountId, accountId, period] : [accountId, accountId]
     );
-    if (r.affectedRows === 0) return res.status(404).json({ message: "activity not found" });
-    res.json({ ok: true });
+
+    const avg = Number(rows?.[0]?.avg_score ?? 0) || 0;
+    res.json({ avg });
   } catch (e) {
-    console.error("DELETE /activities/:id error", e);
+    if (e?.code === "ER_NO_SUCH_TABLE" || e?.sqlState === "42S02") {
+      return res.json({ avg: 0 });
+    }
+    console.error("GET /peer/self error", e);
     res.status(500).json({ message: "Server error" });
   }
 });
