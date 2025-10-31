@@ -701,20 +701,15 @@ router.get("/classmates", async (req, res) => {
 router.post("/peer/evaluations", async (req, res) => {
   try {
     const {
-      period_key,
-      evaluator_id,    // = rater_id
-      target_id,       // = ratee_id
-      major_id,
-      year_level,
-      scores = {},
-      comment,
+      period_key, evaluator_id, target_id,
+      major_id, year_level, scores = {}, comment
     } = req.body || {};
 
     if (!period_key || !evaluator_id || !target_id) {
       return res.status(400).json({ message: "missing required fields" });
     }
     if (Number(evaluator_id) === Number(target_id)) {
-      return res.status(400).json({ message: "cannot evaluate yourself in peer form" });
+      return res.status(400).json({ message: "cannot evaluate yourself" });
     }
 
     const now = new Date();
@@ -730,11 +725,10 @@ router.post("/peer/evaluations", async (req, res) => {
       Number(scores.cooperation || 0),
       Number(scores.adaptability || 0),
       comment || "",
-      0, // is_self = 0 (เพื่อนประเมินเพื่อน)
+      0, // is_self
       now,
     ];
 
-    // แนะนำให้มี UNIQUE KEY (period_key, rater_id, ratee_id) ในตาราง peer_evaluations
     await pool.query(
       `INSERT INTO peer_evaluations
        (period_key, rater_id, ratee_id, major_id, year_level,
@@ -748,12 +742,16 @@ router.post("/peer/evaluations", async (req, res) => {
          cooperation=VALUES(cooperation),
          adaptability=VALUES(adaptability),
          comment=VALUES(comment),
-         created_at=VALUES(created_at)`,
-      vals
+         created_at=VALUES(created_at)`
+      , vals
     );
 
     res.json({ ok: true });
   } catch (e) {
+    // ถ้าไม่ได้ใส่ UNIQUE KEY แล้วชนซ้ำ ให้ตรวจซ้ำเองก็ได้
+    if (e?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "already evaluated this person in this period" });
+    }
     console.error("POST /peer/evaluations error", e);
     res.status(500).json({ message: "submit evaluation error" });
   }
@@ -803,4 +801,25 @@ router.get("/peer/classmates", async (req, res) => {
     res.status(500).json({ message: "list classmates error" });
   }
 });
+
+// GET /api/competency/peer/my-submissions?evaluator_id=..&period=..
+router.get("/peer/my-submissions", async (req, res) => {
+  const evaluator_id = Number(req.query.evaluator_id || 0);
+  const period = String(req.query.period || "");
+  if (!evaluator_id || !period) {
+    return res.status(400).json({ message: "evaluator_id and period required" });
+  }
+  try {
+    const [rows] = await pool.query(
+      `SELECT ratee_id FROM peer_evaluations
+       WHERE rater_id=? AND period_key=? AND is_self=0`,
+      [evaluator_id, period]
+    );
+    res.json({ ratee_ids: rows.map(r => r.ratee_id) });
+  } catch (e) {
+    console.error("GET /peer/my-submissions error:", e?.message || e);
+    res.status(500).json({ message: "server error" });
+  }
+});
+
 module.exports = router;

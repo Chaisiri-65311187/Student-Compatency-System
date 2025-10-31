@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Swal from "sweetalert2";
 import { peer as peerApi } from "../../services/competencyApi";
-import { getUsers } from "../../services/api"; // เผื่อ backend ยังไม่มี endpoint classmates
+import { getUsers } from "../../services/api"; // fallback กรณีไม่มี endpoint
 
 const TOPICS = [
   { key: "communication", label: "สื่อสารกับทีม" },
@@ -12,7 +12,6 @@ const TOPICS = [
   { key: "adaptability", label: "ปรับตัวในทีม" },
 ];
 
-// toast สั้น ๆ
 const Toast = Swal.mixin({
   toast: true,
   position: "top-end",
@@ -23,6 +22,7 @@ const Toast = Swal.mixin({
 
 export default function PeerEvaluationForm({ user, profile, periodKey }) {
   const [classmates, setClassmates] = useState([]);
+  const [ratedIds, setRatedIds] = useState([]); // คนที่เราเคยประเมินในรอบนี้
   const [target, setTarget] = useState("");
   const [scores, setScores] = useState({});
   const [comment, setComment] = useState("");
@@ -34,30 +34,50 @@ export default function PeerEvaluationForm({ user, profile, periodKey }) {
   const year_level = account.year_level ?? null;
   const selfId = user?.id ?? account?.id ?? null;
 
-  // ---- ดึงรายชื่อเพื่อนสาขา/ชั้นปีเดียวกัน (ตัดตัวเองออก) ----
+  // โหลดคนที่เราเคยประเมินแล้วในรอบนี้
+  useEffect(() => {
+    let ignore = false;
+    async function run() {
+      if (!selfId || !periodKey) return;
+      try {
+        const data = await peerApi.mySubmissions(selfId, periodKey);
+        const ids = Array.isArray(data?.ratee_ids) ? data.ratee_ids.map(Number) : [];
+        if (!ignore) setRatedIds(ids);
+      } catch (e) {
+        console.warn("load my-submissions error", e);
+        if (!ignore) setRatedIds([]);
+      }
+    }
+    run();
+    return () => { ignore = true; };
+  }, [selfId, periodKey]);
+
+  // ดึงเพื่อนสาขา/ชั้นปีเดียวกัน
   useEffect(() => {
     let ignore = false;
     async function run() {
       if (!major_id || !year_level) return;
       setLoading(true);
       try {
-        // 1) พยายามใช้ endpoint เฉพาะ (ถ้ามี)
         let list = [];
         try {
-          const got = await peerApi.classmates(major_id, year_level);
-          // รองรับทั้งรูปแบบ array ตรงๆ หรือ {users:[]}
-          list = Array.isArray(got?.users) ? got.users : (Array.isArray(got) ? got : []);
+          const got = await peerApi.classmates(major_id, year_level, selfId);
+          list = Array.isArray(got) ? got : [];
         } catch {
-          // 2) fallback: ดึงทั้งหมดแล้ว filter หน้า FE
+          // fallback: ดึงทั้งหมดแล้ว filter หน้า FE
           const res = await getUsers();
           list = (res?.users || []).filter(
             (u) =>
               Number(u?.major_id) === Number(major_id) &&
-              String(u?.year_level || "") === String(year_level)
+              String(u?.year_level || "") === String(year_level) &&
+              Number(u?.id) !== Number(selfId)
           );
         }
-        // ตัดตัวเอง
-        list = list.filter((u) => Number(u.id) !== Number(selfId));
+        // ตัดออกคนที่ประเมินไปแล้ว (ให้ "ซ่อน" ไปเลย)
+        if (ratedIds.length) {
+          const ratedSet = new Set(ratedIds.map(Number));
+          list = list.filter((u) => !ratedSet.has(Number(u.id)));
+        }
         if (!ignore) setClassmates(list);
       } catch (e) {
         console.error("load classmates error", e);
@@ -68,16 +88,14 @@ export default function PeerEvaluationForm({ user, profile, periodKey }) {
     }
     run();
     return () => { ignore = true; };
-  }, [major_id, year_level, selfId]);
+  }, [major_id, year_level, selfId, ratedIds]);
 
-  // พร้อมใช้งานเมื่อมี periodKey + มีข้อมูลผู้ใช้ + รายชื่อเพื่อนอย่างน้อย 1
   const ready = useMemo(() => {
     return Boolean(periodKey && selfId && major_id && year_level && classmates.length > 0);
   }, [periodKey, selfId, major_id, year_level, classmates.length]);
 
   const canSubmit = useMemo(() => {
     if (!ready || !target) return false;
-    // ต้องให้ครบทุกหัวข้อ และอยู่ในช่วง 1..5
     return TOPICS.every((t) => {
       const v = Number(scores[t.key]);
       return Number.isFinite(v) && v >= 1 && v <= 5;
@@ -101,24 +119,30 @@ export default function PeerEvaluationForm({ user, profile, periodKey }) {
         target_id: Number(target),
         major_id: Number(major_id),
         year_level: String(year_level),
-        scores: { ...scores },   // {communication: 1..5, ...}
+        scores: { ...scores },
         comment: (comment || "").trim(),
       };
       await peerApi.submit(payload);
+
       Toast.fire({ icon: "success", title: "บันทึกการประเมินแล้ว" });
-      // reset เฉพาะคะแนน/คอมเมนต์ เพื่อให้เลือกประเมินคนถัดไปได้เร็ว
+      // กันซ้ำรอบต่อไปใน UI
+      setRatedIds((prev) => [...new Set([...prev, Number(target)])]);
+      // reset บางส่วน
       setScores({});
       setComment("");
       setTarget("");
     } catch (err) {
       console.error(err);
-      Swal.fire("บันทึกไม่สำเร็จ", (err?.message || "กรุณาลองใหม่อีกครั้ง"), "error");
+      if (err?.status === 409) {
+        Swal.fire("ประเมินแล้ว", "คุณประเมินคนนี้ในรอบนี้ไปแล้ว", "info");
+      } else {
+        Swal.fire("บันทึกไม่สำเร็จ", (err?.message || "กรุณาลองใหม่อีกครั้ง"), "error");
+      }
     } finally {
       setSaving(false);
     }
   };
 
-  // ---- UI ----
   if (!periodKey) {
     return <div className="alert alert-warning">ยังไม่ได้กำหนดรอบประเมิน (periodKey)</div>;
   }
@@ -129,13 +153,16 @@ export default function PeerEvaluationForm({ user, profile, periodKey }) {
   return (
     <div className="card border-0 shadow-sm">
       <div className="card-body">
-        <h5 className="mb-3">แบบประเมินเพื่อน ({periodKey})</h5>
+        <h5 className="mb-3">แบบประเมินเพื่อน (รอบ {periodKey})</h5>
 
         {loading ? (
-          <div className="text-muted">กำลังโหลดรายชื่อเพื่อน...</div>
+          <div className="text-muted">
+            <span className="spinner-border spinner-border-sm me-2" />
+            กำลังโหลดรายชื่อเพื่อน...
+          </div>
         ) : classmates.length === 0 ? (
-          <div className="alert alert-info">
-            ยังไม่มีเพื่อนในสาขาเดียวกันชั้นปีเดียวกันให้ประเมิน
+          <div className="alert alert-info mb-0">
+            ไม่มีรายชื่อให้ประเมิน (อาจประเมินครบแล้ว หรือยังไม่มีเพื่อนในสาขา/ชั้นปีเดียวกัน)
           </div>
         ) : (
           <form onSubmit={submit}>
@@ -149,10 +176,15 @@ export default function PeerEvaluationForm({ user, profile, periodKey }) {
                 <option value="">— เลือก —</option>
                 {classmates.map((u) => (
                   <option key={u.id} value={u.id}>
-                    {u.fullname || `${u.firstname || ""} ${u.lastname || ""}`.trim()} ({u.username || u.student_id || u.email})
+                    {u.fullname || `${u.firstname || ""} ${u.lastname || ""}`.trim()} ({u.username || u.email})
                   </option>
                 ))}
               </select>
+              {!!ratedIds.length && (
+                <div className="form-text">
+                  *ชื่อที่ถูกประเมินแล้วในรอบนี้ถูกซ่อนออกจากรายการ
+                </div>
+              )}
             </div>
 
             <div className="row g-3">

@@ -20,12 +20,28 @@ function withJson(init = {}) {
 
 async function jsonFetch(input, init = {}) {
   const res = await fetch(input, withJson(init));
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const status = res.status;
 
-  // อย่ากลบ 404 เป็น null เพราะทำให้ debug ยาก — โยน error ออกไปให้รู้ว่า route ไม่มี
+  // 204 No Content → คืน null ทันที
+  if (status === 204) return null;
+
+  const text = await res.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // กรณี backend ส่งไม่ใช่ JSON (กัน UI แตก)
+      data = { raw: text };
+    }
+  }
+
+  // อย่ากลบ 404 เป็น null — โยน error ออกไปให้รู้ว่า route ไม่มี
   if (!res.ok) {
-    const err = new Error(data?.message || `Request failed: ${res.status}`);
+    const msg =
+      (data && (data.message || data.error)) ||
+      `Request failed: ${res.status}`;
+    const err = new Error(msg);
     err.status = res.status;
     err.data = data;
     throw err;
@@ -65,17 +81,18 @@ export function getRequiredCourses(arg1, year, sem) {
     s = sem;
   }
   const qs = new URLSearchParams();
-  if (major != null) qs.set("major", major);
-  if (y != null) qs.set("year", y);
-  if (s != null) qs.set("sem", s);
-  return jsonFetch(url(`/api/competency/courses/required?${qs.toString()}`));
+  if (major != null && major !== "") qs.set("major", major);
+  if (y != null && y !== "") qs.set("year", y);
+  if (s != null && s !== "") qs.set("sem", s);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return jsonFetch(url(`/api/competency/courses/required${suffix}`));
 }
 
 /** ดึงเกรดที่บันทึกไว้ (ใช้ prefill ฟอร์ม หรือดูผลลัพธ์) */
 export const getSavedGrades = (accountId, { year, sem } = {}) => {
   const q = new URLSearchParams();
-  if (year != null) q.set("year", year);
-  if (sem != null) q.set("sem", sem);
+  if (year != null && year !== "") q.set("year", year);
+  if (sem != null && sem !== "") q.set("sem", sem);
   const suffix = q.toString() ? `?${q.toString()}` : "";
   return jsonFetch(url(`/api/competency/courses/grades/${accountId}${suffix}`));
 };
@@ -93,10 +110,15 @@ export const saveCourseGrades = ({ account_id, items }) =>
   });
 
 /** คำนวณคะแนนด้านวิชาการ (GPA+Core) */
-export const recalcAcademic = (accountId, { year, sem }) =>
-  jsonFetch(url(`/api/competency/recalculate/${accountId}?year=${year}&sem=${sem}`), {
+export const recalcAcademic = (accountId, { year, sem } = {}) => {
+  const qs = new URLSearchParams();
+  if (year != null && year !== "") qs.set("year", year);
+  if (sem != null && sem !== "") qs.set("sem", sem);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return jsonFetch(url(`/api/competency/recalculate/${accountId}${suffix}`), {
     method: "POST",
   });
+};
 
 /* ================= Language ================= */
 
@@ -114,8 +136,7 @@ export const getLatestLanguagesAll = (accountId) =>
 
 /** บันทึกภาษา — backend ใช้ POST /api/competency/language (UPSERT) */
 export async function saveLanguage(payload) {
-  // ถ้าในอนาคตมี PUT /language/:id ค่อยลองเพิ่มสาขา PUT ได้
-  return jsonFetch(`${API_BASE}/api/competency/language`, {
+  return jsonFetch(url(`/api/competency/language`), {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -151,13 +172,12 @@ export const addTraining = (payload) =>
   });
 
 /* ================= Activities ================= */
-export const listActivities = (accountId, cat) =>
-  jsonFetch(
-    url(
-      `/api/competency/activities/${accountId}${cat ? `?cat=${encodeURIComponent(cat)}` : ""
-      }`
-    )
-  );
+export const listActivities = (accountId, cat) => {
+  const qs = new URLSearchParams();
+  if (cat != null && String(cat) !== "") qs.set("cat", cat);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return jsonFetch(url(`/api/competency/activities/${accountId}${suffix}`));
+};
 
 export const addActivity = (payload) =>
   jsonFetch(url(`/api/competency/activities`), {
@@ -181,20 +201,28 @@ const FEATURE_PEER = String(import.meta.env?.VITE_FEATURE_PEER ?? "auto");
 let PEER_SUPPORT = "unknown";
 
 async function ensurePeerAvailable() {
-  if (FEATURE_PEER === "false") { PEER_SUPPORT = "none"; return false; }
+  if (FEATURE_PEER === "false") {
+    PEER_SUPPORT = "none";
+    return false;
+  }
   if (PEER_SUPPORT !== "unknown") return PEER_SUPPORT === "ok";
-  if (FEATURE_PEER === "true") { PEER_SUPPORT = "ok"; return true; }
+  if (FEATURE_PEER === "true") {
+    PEER_SUPPORT = "ok";
+    return true;
+  }
 
   // ✅ probe ถูกต้องตาม backend จริง
-  const probes = [
-    url("/api/competency/peer/health"),
-    url("/api/competency/ping"),
-  ];
+  const probes = [url("/api/competency/peer/health"), url("/api/competency/ping")];
   for (const p of probes) {
     try {
       const r = await fetch(p);
-      if (r && r.ok) { PEER_SUPPORT = "ok"; return true; }
-    } catch { }
+      if (r && r.ok) {
+        PEER_SUPPORT = "ok";
+        return true;
+      }
+    } catch {
+      /* ignore */
+    }
   }
   PEER_SUPPORT = "none";
   return false;
@@ -241,13 +269,35 @@ export const peer = {
     return jsonFetch(url(`/api/competency/peer/self/${accountId}${qs}`));
   },
 
-  // ✅ alias สำหรับโค้ดเดิม
-  listClassmates: async ({ major_id, year_level }) =>
-    (await jsonFetch(url(`/api/competency/peer/classmates?major_id=${major_id}&year_level=${year_level}`)))?.users ?? [],
+  // ✅ alias สำหรับโค้ดเดิม (เพิ่ม ensure ให้ด้วย)
+  listClassmates: async ({ major_id, year_level, exclude_id = "" }) => {
+    const ok = await ensurePeerAvailable();
+    if (!ok) return [];
+    const qs = new URLSearchParams({
+      major_id,
+      year_level,
+      exclude_id,
+    }).toString();
+    const data = await jsonFetch(url(`/api/competency/peer/classmates?${qs}`));
+    return Array.isArray(data?.users) ? data.users : [];
+  },
 
-  submitEvaluation: async (payload) =>
-    jsonFetch(url(`/api/competency/peer/evaluations`), {
+  submitEvaluation: async (payload) => {
+    const ok = await ensurePeerAvailable();
+    if (!ok) return null;
+    return jsonFetch(url(`/api/competency/peer/evaluations`), {
       method: "POST",
       body: JSON.stringify(payload),
-    }),
+    });
+  },
+
+  mySubmissions: async (evaluator_id, period) => {
+    const ok = await ensurePeerAvailable();
+    if (!ok) return { ratee_ids: [] };
+    const qs = new URLSearchParams();
+    if (evaluator_id != null && evaluator_id !== "") qs.set("evaluator_id", evaluator_id);
+    if (period != null && period !== "") qs.set("period", period);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return jsonFetch(url(`/api/competency/peer/my-submissions${suffix}`));
+  },
 };
