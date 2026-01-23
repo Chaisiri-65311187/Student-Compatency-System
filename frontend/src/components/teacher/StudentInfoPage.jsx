@@ -83,7 +83,7 @@ const pickGradeByCode = (gmap, rawCode) => {
 const normalizePeerScore = (v) => {
   const n = Number(v);
   if (!Number.isFinite(n)) return 0;
-  return Math.round(Math.max(0, Math.min(100, n)));
+  return Math.round(Math.max(0, Math.min(100, n))); 
 };
 
 /** เฉลี่ยจาก object แยกหัวข้อ (communication/teamwork/...) สเกล 1..5 */
@@ -609,7 +609,7 @@ export default function StudentInfoPage() {
   if (!user || user.role !== "teacher") return null;
 
   return (
-    <div className="min-vh-100 position-relative bg-animated">
+    <div className="relative ">
       {/* Blobs */}
       <div className="bg-blob bg-blob-1" aria-hidden="true" />
       <div className="bg-blob bg-blob-2" aria-hidden="true" />
@@ -1019,7 +1019,12 @@ export default function StudentInfoPage() {
                                   </thead>
                                   <tbody>
                                     {detail.requiredAll
-                                      .sort((a, b) => (a.year - b.year) || (a.sem - b.sem) || String(a.code).localeCompare(String(b.code)))
+                                      .sort(
+                                        (a, b) =>
+                                          (a.year - b.year) ||
+                                          (a.sem - b.sem) ||
+                                          String(a.code).localeCompare(String(b.code))
+                                      )
                                       .map((row) => (
                                         <tr key={`${row.year}-${row.sem}-${row.code}`}>
                                           <td>{row.year}</td>

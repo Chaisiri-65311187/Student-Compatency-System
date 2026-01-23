@@ -708,9 +708,7 @@ router.post("/peer/evaluations", async (req, res) => {
     if (!period_key || !evaluator_id || !target_id) {
       return res.status(400).json({ message: "missing required fields" });
     }
-    if (Number(evaluator_id) === Number(target_id)) {
-      return res.status(400).json({ message: "cannot evaluate yourself" });
-    }
+    const isSelf = Number(evaluator_id) === Number(target_id);
 
     const now = new Date();
     const vals = [
@@ -725,7 +723,7 @@ router.post("/peer/evaluations", async (req, res) => {
       Number(scores.cooperation || 0),
       Number(scores.adaptability || 0),
       comment || "",
-      0, // is_self
+      isSelf ? 1 : 0,
       now,
     ];
 
