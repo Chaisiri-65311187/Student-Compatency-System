@@ -214,8 +214,10 @@ export default function CompetencyFormPage() {
             <h4 className="mb-0 ms-1">ฟอร์มสมรรถนะ 5 ด้าน</h4>
             <div className="ms-auto d-flex align-items-center gap-3">
               <div className="small text-muted d-none d-md-block">ความคืบหน้า</div>
-              <div className="progress" style={{ width: 160, height: 8 }} aria-label="progress">
-                <div className="progress-bar" role="progressbar" style={{ width: `${progress}%` }} aria-valuenow={progress} aria-valuemin="0" aria-valuemax="100"></div>
+              <div className="progress rounded-pill shadow-sm" style={{ width: 160, height: 10, backgroundColor: "#e9ecef" }} aria-label="progress">
+                <div className="progress-bar" role="progressbar"
+                  style={{ width: `${progress}%`, background: "linear-gradient(90deg, #6a11cb 0%, #2575fc 100%)", borderRadius: 99 }}
+                  aria-valuenow={progress} aria-valuemin="0" aria-valuemax="100"></div>
               </div>
               <div id="scorePreviewAnchor"><ScorePreview user={user} /></div>
             </div>
@@ -229,7 +231,8 @@ export default function CompetencyFormPage() {
               {TABS.map((t) => (
                 <button
                   key={t.key}
-                  className={`btn tab-pill ${active === t.key ? "btn-primary" : "btn-outline-secondary"} ripple`}
+                  className={`btn tab-pill ${active === t.key ? "text-white shadow-sm" : "btn-light text-muted"} ripple`}
+                  style={active === t.key ? { background: "linear-gradient(135deg, #6f42c1, #8e5cff)", border: "none" } : { border: "1px solid rgba(0,0,0,0.05)" }}
                   onClick={() => setActive(t.key)}
                   title={t.label}
                 >

@@ -127,7 +127,7 @@ export default function WorkCollaborationForm({ user }) {
         const prof = await getCompetencyProfile(userId);
         major_id = prof?.account?.major_id ?? null;
         year_level = prof?.account?.year_level ?? null;
-      } catch {}
+      } catch { }
 
       const payload = {
         period_key: periodKey,
@@ -198,11 +198,11 @@ export default function WorkCollaborationForm({ user }) {
         <table className="table align-middle">
           <thead>
             <tr className="table-light">
-              <th style={{ width: "45%" }}>หัวข้อประเมิน</th>
-              <th className="text-center" style={{ width: "25%" }}>
+              <th style={{ width: "45%", borderTop: "none" }}>หัวข้อประเมิน</th>
+              <th className="text-center" style={{ width: "25%", borderTop: "none" }}>
                 คะแนน (1–5)
               </th>
-              <th>หมายเหตุ</th>
+              <th style={{ borderTop: "none" }}>หมายเหตุ</th>
             </tr>
           </thead>
           <tbody>
@@ -211,7 +211,7 @@ export default function WorkCollaborationForm({ user }) {
                 <td>{t.label}</td>
                 <td className="text-center">
                   <select
-                    className="form-select w-auto mx-auto"
+                    className="form-select w-auto mx-auto rounded-3"
                     value={scores[t.key] ?? ""}
                     onChange={(e) =>
                       handleChange(t.key, Number(e.target.value))
@@ -228,7 +228,7 @@ export default function WorkCollaborationForm({ user }) {
                 </td>
                 <td>
                   <input
-                    className="form-control"
+                    className="form-control rounded-3"
                     placeholder="หมายเหตุ (ถ้ามี)"
                     value={notes[t.key] ?? ""}
                     onChange={(e) => handleNote(t.key, e.target.value)}
@@ -242,9 +242,10 @@ export default function WorkCollaborationForm({ user }) {
 
         <div className="text-end">
           <button
-            className="btn btn-primary rounded-pill"
+            className="btn btn-primary rounded-pill px-4 shadow-sm fw-semibold"
             disabled={saving}
             onClick={handleSubmit}
+            style={{ background: "linear-gradient(135deg, #0d6efd, #0a58ca)", border: "none" }}
           >
             {saving ? "กำลังบันทึก..." : "ส่งแบบประเมิน"}
           </button>

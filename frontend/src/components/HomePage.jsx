@@ -11,6 +11,7 @@ import {
   getAnnouncement,
 } from "../services/announcementsApi";
 import PeerEvaluationForm from "./competency/PeerEvaluationForm";
+import { ACTIVITY_CATS } from "../utils/announcementHelpers";
 
 /* ===== Date helpers (TH) ===== */
 const tz = "Asia/Bangkok";
@@ -96,6 +97,9 @@ function normalizeAnnouncement(r) {
     applicants_count: applicants,
     remaining,
     finished: r.finished || r.is_finished || false,
+    activity_category: r.activity_category,
+    work_time_start: r.work_time_start,
+    work_time_end: r.work_time_end,
   };
 }
 function isClosed(a) {
@@ -545,82 +549,116 @@ export default function HomePage() {
                   const myStatus = myAppStatus[item.id];
                   const closed = isClosed(item);
                   const deptBadge = item.department && item.department !== 'ไม่จำกัด' ? item.department : null;
+                  const pct = item.capacity != null ? Math.min(100, Math.round(((item.capacity - (item.remaining ?? 0)) / item.capacity) * 100)) : null;
+                  const catLabel = ACTIVITY_CATS.find((c) => c.value === item.activity_category)?.label || "กิจกรรม";
+                  const catColor = item.activity_category === 'university' ? 'text-bg-warning'
+                    : item.activity_category === 'faculty' ? 'text-bg-info'
+                      : item.activity_category === 'free' ? 'text-bg-success'
+                        : 'text-bg-light text-dark border';
 
                   let rightButton = null;
                   if (myStatus === "completed" || myStatus === "awarded") {
-                    rightButton = (<span className="badge text-bg-success align-self-center">ได้รับชั่วโมงแล้ว</span>);
+                    rightButton = (<span className="badge text-bg-success rounded-pill px-3 py-2">✅ ได้รับชั่วโมงแล้ว</span>);
                   } else if (myStatus === "pending" || myStatus === "accepted") {
                     rightButton = (
-                      <button className="btn btn-outline-danger rounded-3 ripple" onClick={() => onWithdraw(item)}>
-                        ถอนการสมัคร
+                      <button className="btn btn-outline-danger rounded-pill ripple" onClick={() => onWithdraw(item)}>
+                        ❌ ถอนสมัคร
                       </button>
                     );
                   } else if (closed) {
                     rightButton = (
-                      <span className="badge text-bg-secondary align-self-center">
-                        {item.remaining === 0 ? "เต็มแล้ว" : "ปิดรับ"}
+                      <span className="badge text-bg-secondary rounded-pill px-3 py-2">
+                        {item.remaining === 0 ? "🔴 เต็มแล้ว" : "🔒 ปิดรับ"}
                       </span>
                     );
                   } else {
                     rightButton = (
-                      <button className="btn btn-primary rounded-3 ripple" onClick={() => onApply(item)}>
-                        สมัคร
+                      <button className="btn btn-success rounded-pill ripple shadow-sm" onClick={() => onApply(item)}>
+                        ✨ สมัครเลย
                       </button>
                     );
                   }
 
                   return (
-                    <div key={item.id} className="col-md-6 col-lg-4">
-                      <div className="card shadow-sm border-0 rounded-4 overflow-hidden glass-card h-100">
-                        <div className="ratio ratio-21x9" style={{ background: `linear-gradient(135deg, ${PURPLE}, #b388ff)`, position: "relative" }}>
-                          <div className="banner-overlay">
-                            {item.year && (<span className={`year-pill year${item.year}`}>ปี {item.year}</span>)}
-                            <span className="status-wrap"><StatusBadge status={item.status} /></span>
+                    <div key={item.id} className="col-md-4 col-lg-5">
+                      <div className="card shadow-sm border-0 rounded-4 overflow-hidden h-100"
+                        style={{ transition: 'transform 0.2s, box-shadow 0.2s' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-5px)'; e.currentTarget.style.boxShadow = '0 15px 35px rgba(111,66,193,0.15)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = ''; }}>
+
+                        {/* Card Header with Gradient */}
+                        <div className="p-3 text-white position-relative" style={{ background: `linear-gradient(135deg, ${PURPLE}, #b388ff)` }}>
+                          <div className="d-flex justify-content-between align-items-start">
+                            <div>
+                              {item.year && (
+                                <span className="badge bg-white text-dark rounded-pill mb-2 shadow-sm me-1">
+                                  📚 ชั้นปี {item.year}
+                                </span>
+                              )}
+                              <span className={`badge ${catColor} rounded-pill mb-2 shadow-sm`}>
+                                {catLabel}
+                              </span>
+                              <h6 className="fw-bold mb-0 text-truncate" title={item.title} style={{ maxWidth: 220 }}>
+                                {item.title}
+                              </h6>
+                            </div>
+                            <StatusBadge status={item.status} />
                           </div>
                         </div>
 
                         <div className="card-body d-flex flex-column">
-                          <h5 className="mb-1 text-truncate" title={item.title}>{item.title}</h5>
                           <div className="text-muted small mb-2">
-                            อาจารย์ผู้รับผิดชอบ: <span className="text-dark fw-semibold">{item.teacher}</span>
+                            👨‍🏫 <span className="text-dark fw-semibold">{item.teacher}</span>
                             {deptBadge && <span className="badge bg-light text-dark ms-2">{deptBadge}</span>}
                           </div>
 
-                          <div className="small mb-2">
-                            <i className="bi bi-people me-1" />
-                            รับ: {item.remaining ?? "ไม่จำกัด"}{item.capacity != null && <> / {item.capacity}</>}
-                          </div>
-
-                          {Array.isArray(item.work_periods) && item.work_periods.length > 0 ? (
-                            <div className="small mb-2">
-                              <div className="text-muted">ช่วงวันที่ทำงาน:</div>
-                              {item.work_periods.map((p, i) => (<div key={i}>• {rangeLine(p)}</div>))}
-                            </div>
-                          ) : (item.work_date || item.work_end) && (
-                            <div className="small mb-2">
-                              <span className="text-muted">ช่วงวันที่ทำงาน:</span>{" "}
-                              <span className="fw-medium">
-                                {item.work_end && item.work_end !== item.work_date
-                                  ? `${dateTH(item.work_date)} – ${dateTH(item.work_end)}`
-                                  : dateTH(item.work_date)}
-                              </span>
+                          {/* Capacity Progress */}
+                          {item.capacity != null && (
+                            <div className="mb-2">
+                              <div className="d-flex justify-content-between small text-muted mb-1">
+                                <span>👥 ความจุ</span>
+                                <span>{(item.capacity - (item.remaining ?? 0))} / {item.capacity}</span>
+                              </div>
+                              <div className="progress rounded-pill" style={{ height: 8 }}>
+                                <div className={`progress-bar ${pct < 70 ? 'bg-success' : pct < 90 ? 'bg-warning' : 'bg-danger'}`} style={{ width: `${pct}%` }} />
+                              </div>
                             </div>
                           )}
 
-                          {item.deadline && (<div className="small mb-1"><span className="text-muted">วันปิดรับสมัคร:</span> <span className="fw-medium">{dateTH(item.deadline)}</span></div>)}
-                          <div className="small mb-1"><span className="text-muted">สาขา:</span> <span className="fw-medium">{item.department || '-'}</span></div>
-                          {item.location && (<div className="small text-muted mb-2">สถานที่: {item.location}</div>)}
-                          {item.description && (<p className="text-muted mb-3 line-clamp-3">{item.description}</p>)}
+                          {Array.isArray(item.work_periods) && item.work_periods.length > 0 ? (
+                            <div className="small mb-2 text-muted">
+                              📅 {item.work_periods.map((p, i) => (<span key={i}>{rangeLine(p)}{i < item.work_periods.length - 1 ? ', ' : ''}</span>))}
+                            </div>
+                          ) : (item.work_date || item.work_end) && (
+                            <div className="small mb-2 text-muted">
+                              📅 {item.work_end && item.work_end !== item.work_date ? `${dateTH(item.work_date)} – ${dateTH(item.work_end)}` : dateTH(item.work_date)}
+                              {item.work_time_start ? ` (${timeHM(item.work_time_start)}–${timeHM(item.work_time_end || "")})` : ""}
+                            </div>
+                          )}
+
+                          {item.deadline && (
+                            <div className="small text-danger mb-2">⏰ ปิดรับ {dateTH(item.deadline)}</div>
+                          )}
+
+                          {item.location && (
+                            <div className="small text-muted mb-2">📍 {item.location}</div>
+                          )}
+
+                          {item.description && (
+                            <p className="text-muted small mb-3 flex-grow-1" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                              {item.description}
+                            </p>
+                          )}
 
                           <div className="mt-auto d-flex gap-2">
-                            <button className="btn btn-outline-secondary flex-grow-1 rounded-3 ripple" onClick={() => { setSelectedAnnouncement(item); setShowModal(true); }}>
-                              ดูรายละเอียด
+                            <button className="btn btn-outline-primary flex-grow-1 rounded-pill ripple" onClick={() => { setSelectedAnnouncement(item); setShowModal(true); }}>
+                              👁️ ดูรายละเอียด
                             </button>
                             {rightButton}
                           </div>
 
                           {myStatus && !["rejected", "pending", "accepted", "completed", "awarded"].includes(myStatus) && (
-                            <div className="small text-muted mt-2">สถานะการสมัคร: {myStatus}</div>
+                            <div className="small text-muted mt-2 text-center">สถานะ: {myStatus}</div>
                           )}
                         </div>
                       </div>
@@ -637,95 +675,132 @@ export default function HomePage() {
       {showModal && selectedAnnouncement && (
         <div className="modal d-block" tabIndex="-1" style={{ backgroundColor: "rgba(0,0,0,0.5)", position: "fixed", inset: 0, overflowY: "auto", zIndex: 1050 }}>
           <div className="modal-dialog modal-dialog-centered modal-lg">
-            <div className="modal-content rounded-4">
-              <div className="modal-header border-0">
-                <h5 className="modal-title">{selectedAnnouncement.title}</h5>
-                <button type="button" className="btn-close" onClick={() => { setShowModal(false); setSelectedAnnouncement(null); }}></button>
+            <div className="modal-content rounded-4 overflow-hidden border-0 shadow-lg">
+              {/* Gradient Header */}
+              <div className="text-white p-4" style={{ background: `linear-gradient(135deg, ${PURPLE}, #b388ff)` }}>
+                <div className="d-flex justify-content-between align-items-start">
+                  <div>
+                    {selectedAnnouncement.year && (
+                      <span className="badge bg-white text-dark rounded-pill mb-2 me-1">📚 ชั้นปี {selectedAnnouncement.year}</span>
+                    )}
+                    {(() => {
+                      const ac = selectedAnnouncement.activity_category;
+                      const color = ac === 'university' ? 'text-bg-warning'
+                        : ac === 'faculty' ? 'text-bg-info'
+                          : ac === 'free' ? 'text-bg-success'
+                            : 'text-bg-light text-dark border';
+                      const label = ACTIVITY_CATS.find((c) => c.value === ac)?.label || "กิจกรรม";
+                      return <span className={`badge ${color} rounded-pill mb-2`}>{label}</span>;
+                    })()}
+                    <h4 className="modal-title fw-bold mb-0">{selectedAnnouncement.title}</h4>
+                    <div className="opacity-75 mt-1">👨‍🏫 {selectedAnnouncement.teacher}</div>
+                  </div>
+                  <button type="button" className="btn-close btn-close-white" onClick={() => { setShowModal(false); setSelectedAnnouncement(null); }}></button>
+                </div>
               </div>
 
-              <div className="modal-body pt-0">
+              <div className="modal-body">
                 <div className="row g-3">
-                  <div className="col-md-6">
-                    <div className="small text-muted mb-1">อาจารย์ผู้รับผิดชอบ</div>
-                    <div className="fw-medium">{selectedAnnouncement.teacher}</div>
+                  {/* Info Cards */}
+                  <div className="col-6 col-md-3">
+                    <div className="card border-0 bg-light rounded-3 text-center py-3">
+                      <div style={{ fontSize: '1.5rem' }}>📋</div>
+                      <div className="small text-muted">สถานะ</div>
+                      <StatusBadge status={selectedAnnouncement.status} />
+                    </div>
                   </div>
-                  <div className="col-md-6">
-                    <div className="small text-muted mb-1">สถานะ</div>
-                    <StatusBadge status={selectedAnnouncement.status} />
+                  <div className="col-6 col-md-3">
+                    <div className="card border-0 bg-light rounded-3 text-center py-3">
+                      <div style={{ fontSize: '1.5rem' }}>👥</div>
+                      <div className="small text-muted">รับ</div>
+                      <div className="fw-bold">{selectedAnnouncement.remaining ?? "ไม่จำกัด"}{selectedAnnouncement.capacity != null && (<> / {selectedAnnouncement.capacity}</>)}</div>
+                    </div>
                   </div>
-
-                  <div className="col-12">
-                    <div className="small text-muted mb-1">ช่วงวันที่ทำงาน</div>
-                    {Array.isArray(selectedAnnouncement.work_periods) && selectedAnnouncement.work_periods.length > 0 ? (
-                      <div className="fw-normal">{selectedAnnouncement.work_periods.map((p, i) => (<div key={i}>• {rangeLine(p)}</div>))}</div>
-                    ) : (
-                      <div className="fw-medium">
-                        {selectedAnnouncement.work_end && selectedAnnouncement.work_end !== selectedAnnouncement.work_date
-                          ? `${dateTH(selectedAnnouncement.work_date)} – ${dateTH(selectedAnnouncement.work_end)}`
-                          : dateTH(selectedAnnouncement.work_date)}
-                      </div>
-                    )}
+                  <div className="col-6 col-md-3">
+                    <div className="card border-0 bg-light rounded-3 text-center py-3">
+                      <div style={{ fontSize: '1.5rem' }}>🏢</div>
+                      <div className="small text-muted">สาขา</div>
+                      <div className="fw-semibold small">{selectedAnnouncement.department}</div>
+                    </div>
                   </div>
-
                   {selectedAnnouncement.deadline && (
-                    <div className="col-md-6">
-                      <div className="small text-muted mb-1">วันปิดรับสมัคร</div>
-                      <div className="fw-medium">{dateTH(selectedAnnouncement.deadline)}</div>
+                    <div className="col-6 col-md-3">
+                      <div className="card border-0 bg-danger bg-opacity-10 rounded-3 text-center py-3">
+                        <div style={{ fontSize: '1.5rem' }}>⏰</div>
+                        <div className="small text-muted">ปิดรับ</div>
+                        <div className="fw-semibold text-danger small">{dateTH(selectedAnnouncement.deadline)}</div>
+                      </div>
                     </div>
                   )}
 
-                  <div className="col-md-6">
-                    <div className="small text-muted mb-1">ชั้นปีที่สมัครได้</div>
-                    <div className="fw-medium">{selectedAnnouncement.year ?? "-"}</div>
+                  {/* Work Periods */}
+                  <div className="col-12">
+                    <div className="card border-0 bg-light rounded-3 p-3">
+                      <div className="d-flex align-items-center gap-2 mb-2">
+                        <span style={{ fontSize: '1.2rem' }}>📅</span>
+                        <span className="fw-semibold">ช่วงวันที่ทำงาน</span>
+                      </div>
+                      {Array.isArray(selectedAnnouncement.work_periods) && selectedAnnouncement.work_periods.length > 0 ? (
+                        <div className="small">{selectedAnnouncement.work_periods.map((p, i) => (<div key={i}>• {rangeLine(p)}</div>))}</div>
+                      ) : (
+                        <div className="small">
+                          {selectedAnnouncement.work_end && selectedAnnouncement.work_end !== selectedAnnouncement.work_date
+                            ? `${dateTH(selectedAnnouncement.work_date)} – ${dateTH(selectedAnnouncement.work_end)}`
+                            : dateTH(selectedAnnouncement.work_date) || "ยังไม่ระบุ"}
+                          {selectedAnnouncement.work_time_start && (
+                            ` (${timeHM(selectedAnnouncement.work_time_start)} – ${timeHM(selectedAnnouncement.work_time_end || "")})`
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="col-md-6">
-                    <div className="small text-muted mb-1">จำนวนรับ</div>
-                    <div className="fw-medium">{selectedAnnouncement.remaining ?? "ไม่จำกัด"}{selectedAnnouncement.capacity != null && (<> / {selectedAnnouncement.capacity}</>)}</div>
-                  </div>
-
-                  <div className="col-md-6">
-                    <div className="small text-muted mb-1">สาขาที่เกี่ยวข้อง</div>
-                    <div className="fw-medium">{selectedAnnouncement.department}</div>
-                  </div>
-
+                  {/* Location */}
                   {selectedAnnouncement.location && (
                     <div className="col-12">
-                      <div className="small text-muted mb-1">สถานที่ทำงาน</div>
-                      <div className="fw-medium">{selectedAnnouncement.location}</div>
+                      <div className="d-flex align-items-center gap-2">
+                        <span style={{ fontSize: '1.2rem' }}>📍</span>
+                        <span><span className="text-muted">สถานที่:</span> <span className="fw-medium">{selectedAnnouncement.location}</span></span>
+                      </div>
                     </div>
                   )}
 
+                  {/* Description */}
                   {selectedAnnouncement.description && (
                     <div className="col-12">
-                      <div className="small text-muted mb-1">รายละเอียด</div>
-                      <div className="fw-normal">{selectedAnnouncement.description}</div>
+                      <div className="d-flex align-items-start gap-2">
+                        <span style={{ fontSize: '1.2rem' }}>📝</span>
+                        <div>
+                          <div className="text-muted small mb-1">รายละเอียด</div>
+                          <div style={{ whiteSpace: 'pre-wrap' }}>{selectedAnnouncement.description}</div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="modal-footer border-0">
-                <button className="btn btn-secondary rounded-3 ripple" onClick={() => { setShowModal(false); setSelectedAnnouncement(null); }}>ปิด</button>
+              <div className="modal-footer border-0 bg-light">
+                <button className="btn btn-outline-secondary rounded-pill ripple" onClick={() => { setShowModal(false); setSelectedAnnouncement(null); }}>ปิด</button>
 
                 {(() => {
                   const ms = myAppStatus[selectedAnnouncement.id];
                   if (ms === "completed" || ms === "awarded") {
-                    return <span className="badge text-bg-success">ได้รับชั่วโมงแล้ว</span>;
+                    return <span className="badge text-bg-success rounded-pill px-3 py-2">✅ ได้รับชั่วโมงแล้ว</span>;
                   }
                   if (ms === "pending" || ms === "accepted") {
-                    return <button className="btn btn-outline-danger rounded-3 ripple" onClick={() => onWithdraw(selectedAnnouncement)}>ถอนการสมัคร</button>;
+                    return <button className="btn btn-outline-danger rounded-pill ripple" onClick={() => onWithdraw(selectedAnnouncement)}>❌ ถอนการสมัคร</button>;
                   }
                   if (isClosed(selectedAnnouncement)) {
                     return (
-                      <span className="badge text-bg-secondary">
-                        {(selectedAnnouncement.remaining ?? 1) === 0 ? "เต็มแล้ว" : "ปิดรับ"}
+                      <span className="badge text-bg-secondary rounded-pill px-3 py-2">
+                        {(selectedAnnouncement.remaining ?? 1) === 0 ? "🔴 เต็มแล้ว" : "🔒 ปิดรับ"}
                       </span>
                     );
                   }
                   return (
-                    <button className="btn btn-primary rounded-3 ripple" onClick={() => onApply(selectedAnnouncement)}>
-                      สมัคร
+                    <button className="btn btn-success rounded-pill ripple shadow-sm" onClick={() => onApply(selectedAnnouncement)}>
+                      ✨ สมัครเลย
                     </button>
                   );
                 })()}

@@ -174,30 +174,34 @@ export default function TechSection({ user }) {
     <div className="row g-4">
       {/* ---------- อบรม/เวิร์กช็อป ---------- */}
       <div className="col-12">
-        <h6>อบรม/เวิร์กช็อป</h6>
-        <div className="table-responsive">
-          <table className="table">
-            <thead>
+        <h6 className="fw-bold mb-3">อบรม/เวิร์กช็อป</h6>
+        <div className="table-responsive rounded-4 shadow-sm border-0 mb-3">
+          <table className="table align-middle table-hover mb-0">
+            <thead className="table-light">
               <tr>
-                <th>หัวข้อ</th><th>ผู้จัด</th><th>ชั่วโมง</th><th>วันที่</th><th>หลักฐาน</th>
+                <th style={{ borderTop: "none" }}>หัวข้อ</th>
+                <th style={{ borderTop: "none" }}>ผู้จัด</th>
+                <th style={{ borderTop: "none" }}>ชั่วโมง</th>
+                <th style={{ borderTop: "none" }}>วันที่</th>
+                <th style={{ borderTop: "none" }}>หลักฐาน</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} className="text-muted">กำลังโหลด…</td></tr>
+                <tr><td colSpan={5} className="text-muted p-3">กำลังโหลด…</td></tr>
               ) : (
                 <>
                   {trainings.map((t, i) => (
                     <tr key={i}>
-                      <td>{t.title}</td>
+                      <td className="fw-semibold text-dark">{t.title}</td>
                       <td>{t.provider || "-"}</td>
                       <td>{t.hours ?? "-"}</td>
                       <td>{asDateInput(t.taken_at) || "-"}</td>
-                      <td>{t.proof_url ? <a href={t.proof_url} target="_blank" rel="noreferrer">link</a> : "-"}</td>
+                      <td>{t.proof_url ? <a href={t.proof_url} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline-primary rounded-pill">Link</a> : "-"}</td>
                     </tr>
                   ))}
                   {!trainings.length && (
-                    <tr><td colSpan={5} className="text-muted">ยังไม่มีอบรม</td></tr>
+                    <tr><td colSpan={5} className="text-muted p-3 text-center">ยังไม่มีข้อมูลอบรม</td></tr>
                   )}
                 </>
               )}
@@ -205,30 +209,33 @@ export default function TechSection({ user }) {
           </table>
         </div>
 
-        <div className="border rounded p-3">
-          <div className="small text-muted mb-2">
-            * ชั่วคราว: ต้องทราบ <b>training_id</b> จากระบบ
-          </div>
-          <div className="row g-2">
-            <div className="col-3">
-              <input className="form-control" placeholder="training_id"
-                     value={trainingId} onChange={(e)=>setTrainingId(e.target.value)}
-                     disabled={adding} />
+        <div className="card border-0 shadow-sm rounded-4 bg-light">
+          <div className="card-body">
+            <div className="small text-muted mb-2">
+              <i className="bi bi-info-circle me-1"></i>
+              ต้องทราบ <b>training_id</b> จากระบบเพื่อเพิ่มข้อมูล
             </div>
-            <div className="col-3">
-              <input className="form-control" type="date"
-                     value={trainingDate} onChange={(e)=>setTrainingDate(e.target.value)}
-                     disabled={adding} />
-            </div>
-            <div className="col-6">
-              <input className="form-control" placeholder="หลักฐาน URL"
-                     value={trainingProof} onChange={(e)=>setTrainingProof(e.target.value)}
-                     disabled={adding} />
-            </div>
-            <div className="col-12">
-              <button className="btn btn-outline-primary" onClick={onAddTraining} disabled={adding}>
-                {adding ? "กำลังบันทึก..." : "เพิ่มอบรม"}
-              </button>
+            <div className="row g-2">
+              <div className="col-md-3 col-6">
+                <input className="form-control rounded-3 border-0" placeholder="training_id"
+                  value={trainingId} onChange={(e) => setTrainingId(e.target.value)}
+                  disabled={adding} />
+              </div>
+              <div className="col-md-3 col-6">
+                <input className="form-control rounded-3 border-0" type="date"
+                  value={trainingDate} onChange={(e) => setTrainingDate(e.target.value)}
+                  disabled={adding} />
+              </div>
+              <div className="col-md-4 col-12">
+                <input className="form-control rounded-3 border-0" placeholder="หลักฐาน URL"
+                  value={trainingProof} onChange={(e) => setTrainingProof(e.target.value)}
+                  disabled={adding} />
+              </div>
+              <div className="col-md-2 col-12">
+                <button className="btn btn-outline-primary w-100 rounded-pill shadow-sm" onClick={onAddTraining} disabled={adding}>
+                  {adding ? "…" : "เพิ่ม"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -236,58 +243,64 @@ export default function TechSection({ user }) {
 
       {/* ---------- คะแนนสอบ ICT / ITPE ---------- */}
       <div className="col-12">
-        <div className="card shadow-sm">
+        <div className="card shadow-sm border-0 rounded-4">
           <div className="card-body">
-            <h6 className="mb-3">บันทึกคะแนนสอบ ICT / ITPE</h6>
+            <h6 className="mb-3 fw-bold">บันทึกคะแนนสอบ ICT / ITPE</h6>
 
             <div className="row g-3">
               {/* ICT */}
               <div className="col-12 col-md-6">
-                <div className="border rounded p-3 h-100">
-                  <div className="fw-semibold mb-2">ICT</div>
-                  <div className="row g-2">
-                    <div className="col-5">
-                      <input className="form-control" type="number" min="0" max="100" step="1"
-                             placeholder="คะแนน ICT (% 0–100)"
-                             value={ictScore} onChange={(e)=>setIctScore(e.target.value)} disabled={savingIct} />
+                <div className="card bg-light border-0 rounded-4 h-100">
+                  <div className="card-body">
+                    <div className="fw-semibold mb-2 text-primary">ICT</div>
+                    <div className="row g-2">
+                      <div className="col-12">
+                        <input className="form-control rounded-3 border-0" type="number" min="0" max="100" step="1"
+                          placeholder="คะแนน ICT (% 0–100)"
+                          value={ictScore} onChange={(e) => setIctScore(e.target.value)} disabled={savingIct} />
+                      </div>
+                      <div className="col-8">
+                        <input className="form-control rounded-3 border-0" type="date"
+                          value={ictDate} onChange={(e) => setIctDate(e.target.value)} disabled={savingIct} />
+                      </div>
+                      <div className="col-4">
+                        <button className="btn btn-primary w-100 rounded-pill shadow-sm"
+                          disabled={savingIct || !isValidPercent(ictScore)} onClick={saveIct}
+                          style={{ background: "linear-gradient(135deg, #0d6efd, #0a58ca)", border: "none" }}>
+                          {savingIct ? "…" : "บันทึก"}
+                        </button>
+                      </div>
                     </div>
-                    <div className="col-5">
-                      <input className="form-control" type="date"
-                             value={ictDate} onChange={(e)=>setIctDate(e.target.value)} disabled={savingIct} />
-                    </div>
-                    <div className="col-2">
-                      <button className="btn btn-primary w-100"
-                              disabled={savingIct || !isValidPercent(ictScore)} onClick={saveIct}>
-                        {savingIct ? "…" : "บันทึก"}
-                      </button>
-                    </div>
+                    <div className="form-text mt-2 small">เกณฑ์ผ่าน ≥ 50%</div>
                   </div>
-                  <div className="form-text mt-1">เกณฑ์ผ่าน ≥ 50%</div>
                 </div>
               </div>
 
               {/* ITPE */}
               <div className="col-12 col-md-6">
-                <div className="border rounded p-3 h-100">
-                  <div className="fw-semibold mb-2">ITPE</div>
-                  <div className="row g-2">
-                    <div className="col-5">
-                      <input className="form-control" type="number" min="0" max="100" step="1"
-                             placeholder="คะแนน ITPE (% 0–100)"
-                             value={itpeScore} onChange={(e)=>setItpeScore(e.target.value)} disabled={savingItpe} />
+                <div className="card bg-light border-0 rounded-4 h-100">
+                  <div className="card-body">
+                    <div className="fw-semibold mb-2 text-primary">ITPE</div>
+                    <div className="row g-2">
+                      <div className="col-12">
+                        <input className="form-control rounded-3 border-0" type="number" min="0" max="100" step="1"
+                          placeholder="คะแนน ITPE (% 0–100)"
+                          value={itpeScore} onChange={(e) => setItpeScore(e.target.value)} disabled={savingItpe} />
+                      </div>
+                      <div className="col-8">
+                        <input className="form-control rounded-3 border-0" type="date"
+                          value={itpeDate} onChange={(e) => setItpeDate(e.target.value)} disabled={savingItpe} />
+                      </div>
+                      <div className="col-4">
+                        <button className="btn btn-primary w-100 rounded-pill shadow-sm"
+                          disabled={savingItpe || !isValidPercent(itpeScore)} onClick={saveItpe}
+                          style={{ background: "linear-gradient(135deg, #0d6efd, #0a58ca)", border: "none" }}>
+                          {savingItpe ? "…" : "บันทึก"}
+                        </button>
+                      </div>
                     </div>
-                    <div className="col-5">
-                      <input className="form-control" type="date"
-                             value={itpeDate} onChange={(e)=>setItpeDate(e.target.value)} disabled={savingItpe} />
-                    </div>
-                    <div className="col-2">
-                      <button className="btn btn-primary w-100"
-                              disabled={savingItpe || !isValidPercent(itpeScore)} onClick={saveItpe}>
-                        {savingItpe ? "…" : "บันทึก"}
-                      </button>
-                    </div>
+                    <div className="form-text mt-2 small">IP ผ่าน ≥55% · FE ผ่าน ≥60%</div>
                   </div>
-                  <div className="form-text mt-1">IP ผ่าน ≥55% · FE ผ่าน ≥60%</div>
                 </div>
               </div>
             </div>

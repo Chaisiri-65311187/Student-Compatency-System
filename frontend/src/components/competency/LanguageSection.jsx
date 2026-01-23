@@ -106,7 +106,7 @@ export default function LanguageSection({ user }) {
       <div className="col-12 col-md-4">
         <label className="form-label">ระดับ CEPT</label>
         <select
-          className="form-select"
+          className="form-select rounded-3"
           value={level}
           onChange={(e) => setLevel(e.target.value)}
           disabled={loading}
@@ -123,7 +123,7 @@ export default function LanguageSection({ user }) {
       <div className="col-6 col-md-4">
         <label className="form-label">วันที่สอบ</label>
         <input
-          className="form-control"
+          className="form-control rounded-3"
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
@@ -134,7 +134,7 @@ export default function LanguageSection({ user }) {
       <div className="col-6 col-md-4">
         <label className="form-label">คะแนนดิบ/รหัสผล</label>
         <input
-          className="form-control"
+          className="form-control rounded-3"
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
           placeholder="เช่น 78/100 หรือ CEPT-YYYY-####"
@@ -143,14 +143,14 @@ export default function LanguageSection({ user }) {
       </div>
 
       <div className="col-12 d-flex gap-2">
-        <button className="btn btn-primary" onClick={onSave} disabled={loading}>
+        <button className="btn btn-primary rounded-pill px-4 shadow-sm fw-semibold" onClick={onSave} disabled={loading} style={{ background: "linear-gradient(135deg, #0d6efd, #0a58ca)", border: "none" }}>
           {loading ? "กำลังบันทึก..." : mainBtnLabel}
         </button>
 
         {latest && !editMode && (
           <button
             type="button"
-            className="btn btn-outline-secondary"
+            className="btn btn-light rounded-pill px-4 border shadow-sm"
             onClick={startEdit}
             disabled={loading}
           >
@@ -161,7 +161,7 @@ export default function LanguageSection({ user }) {
         {editMode && (
           <button
             type="button"
-            className="btn btn-outline-danger"
+            className="btn btn-outline-danger rounded-pill px-4"
             onClick={cancelEdit}
             disabled={loading}
           >
@@ -172,12 +172,12 @@ export default function LanguageSection({ user }) {
 
       {/* แสดงผลล่าสุด */}
       <div className="col-12">
-        <div className="alert alert-info mt-3 mb-0">
+        <div className="alert bg-info bg-opacity-10 border-0 rounded-4 shadow-sm mt-3 mb-0 text-info-emphasis">
           <strong>ผลล่าสุด: </strong>
           {latest
             ? `${latest.level || "-"} (${toISODate(
-                latest.taken_at || latest.takenAt
-              ) || "ไม่ระบุวันที่"})`
+              latest.taken_at || latest.takenAt
+            ) || "ไม่ระบุวันที่"})`
             : "ยังไม่มี"}
         </div>
       </div>

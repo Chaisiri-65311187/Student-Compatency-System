@@ -1,81 +1,22 @@
 // src/components/teacher/EditAnnouncementPage.jsx
-// — UI เดิม, รับข้อมูลเดิม, เพิ่ม id/name ให้ทุกฟิลด์, helper แปลงวันที่/เวลาแบบยืดหยุ่น
+// — Modern UI, merged capacity field, shared helpers
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { getAnnouncement, updateAnnouncement } from "../../services/announcementsApi";
 import Swal from "sweetalert2";
+import {
+  toISODate, toHHMM, toDateInput, toTimeInput, dateTH, lineFromPeriod,
+  DEPTS, YEARS, STATUSES, STATUS_LABEL, ROLE_OPTIONS, ACTIVITY_CATS,
+  sharedPageStyles
+} from "../../utils/announcementHelpers";
 
-/* ===== Helpers ===== */
-const tz = "Asia/Bangkok";
-const toISODate = (s) => {
-  if (!s) return null;
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return null;
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-};
-const toHHMM = (s) => {
-  if (!s) return null;
-  const m = /^(\d{2}):?(\d{2})/.exec(String(s));
-  return m ? `${m[1]}:${m[2]}` : null;
-};
-const toDateInput = (v) => {
-  if (!v) return "";
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return "";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-};
-const toTimeInput = (v) => {
-  if (!v) return "";
-  if (typeof v === "string" && /^\d{2}:\d{2}/.test(v)) return v.slice(0, 5);
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return "";
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
-};
-const parseSafe = (s) => (s ? new Date(s) : null);
-const dateTH = (s) => {
-  const d = parseSafe(s);
-  if (!d || isNaN(d.getTime())) return "-";
-  return new Intl.DateTimeFormat("th-TH", {
-    timeZone: tz,
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(d);
-};
-const timeHM = (t) => (t ? String(t).slice(0, 5) : "");
-const lineFromPeriod = (p) => {
-  const a = toISODate(p.startDate);
-  const b = toISODate(p.endDate || p.startDate);
-  const date = a && b && a !== b ? `${dateTH(a)} – ${dateTH(b)}` : dateTH(a || b);
-  const time = p.startTime || p.endTime ? ` (${timeHM(p.startTime) || "—"}–${timeHM(p.endTime) || "—"})` : "";
-  return `${date}${time}`;
-};
-
-/* ===== Static options ===== */
-const DEPTS = ["ไม่จำกัด", "วิทยาการคอมพิวเตอร์", "เทคโนโลยีสารสนเทศ"];
-const YEARS = [1, 2, 3, 4];
-const STATUSES = ["open", "closed", "archived"];
-const ROLE_OPTIONS = [
-  { value: "student", label: "นิสิต" },
-  { value: "teacher", label: "อาจารย์" },
-  { value: "all", label: "ทุกกลุ่ม" },
-];
-
+/* Custom StatusBadge for Edit Page */
 const StatusBadge = ({ status }) => {
-  const cls = status === "open" ? "badge text-bg-success" : status === "closed" ? "badge text-bg-secondary" : "badge text-bg-dark";
-  const label = status === "open" ? "เปิดรับ" : status === "closed" ? "ปิดรับ" : "เก็บถาวร";
-  return <span className={cls}>{label}</span>;
-};
+  const cls = status === "open" ? "bg-success" : status === "closed" ? "bg-secondary" : "bg-dark";
+  const label = STATUS_LABEL[status] || status;
+  return <span className={`badge rounded-pill ${cls}`}>{label}</span>;
+}
 
 export default function EditAnnouncementPage() {
   const { id } = useParams();
@@ -88,8 +29,8 @@ export default function EditAnnouncementPage() {
     department: "ไม่จำกัด",
     year: "",
     seats: "",
-    capacity: "",
     role_target: "student",
+    activity_category: "social",
     status: "open",
     location: "",
     deadline: "",
@@ -117,16 +58,18 @@ export default function EditAnnouncementPage() {
           description: a?.description || "",
           department: a?.department || "ไม่จำกัด",
           year: a?.year ?? "",
-          seats: a?.seats ?? "",
-          capacity: a?.capacity ?? "",
+          seats: a?.seats ?? (a?.capacity ?? ""), // use capacity if seats missing
           role_target: a?.role_target || "student",
+          activity_category: a?.activity_category || "social",
           status: a?.status || "open",
           location: a?.location || "",
           deadline: toDateInput(a?.deadline),
         });
+
         const src = Array.isArray(a?.work_periods) && a.work_periods.length
           ? a.work_periods
           : [{ start_date: a?.work_date, end_date: a?.work_end, start_time: a?.work_time_start, end_time: a?.work_time_end }];
+
         setPeriods(
           src.map((p) => ({
             startDate: toDateInput(p.start_date || p.work_date),
@@ -151,7 +94,7 @@ export default function EditAnnouncementPage() {
       ps.map((p, i) => {
         if (i !== idx) return p;
         const next = { ...p, [k]: v };
-        if (k === "startDate" && v && !next.endDate) next.endDate = v; // auto-fill
+        if (k === "startDate" && v && !next.endDate) next.endDate = v;
         return next;
       })
     );
@@ -179,9 +122,7 @@ export default function EditAnnouncementPage() {
       end_time: toHHMM(p.endTime),
     }));
     const first = wp[0] || {};
-
     const seatsNum = Number(form.seats) || 1;
-    const capacityNum = form.capacity === "" || form.capacity == null ? seatsNum : Number(form.capacity);
 
     const payload = {
       title: form.title,
@@ -192,8 +133,9 @@ export default function EditAnnouncementPage() {
       location: form.location || "",
       deadline: toISODate(form.deadline),
       seats: seatsNum,
-      capacity: capacityNum,
+      capacity: seatsNum, // Sync capacity with seats
       role_target: form.role_target,
+      activity_category: form.activity_category,
       work_periods: wp,
       work_date: first.start_date || null,
       work_end: first.end_date || null,
@@ -214,18 +156,21 @@ export default function EditAnnouncementPage() {
     }
   };
 
-  if (loading) return <div className="container-xxl py-5 text-center">กำลังโหลด…</div>;
+  if (loading) return <div className="container-xxl py-5 text-center"><div className="spinner-border text-primary" /></div>;
 
   const previewLines = periods.filter((p) => p.startDate).map(lineFromPeriod);
-  const previewDeadline = form.deadline ? dateTH(form.deadline) : null;
 
   return (
     <div className="min-vh-100 position-relative overflow-hidden bg-animated">
+      <div className="bg-blob bg-blob-1" aria-hidden="true" />
+      <div className="bg-blob bg-blob-2" aria-hidden="true" />
+      <div className="bg-blob bg-blob-3" aria-hidden="true" />
+
       {/* Top Bar */}
       <div className="hero-bar topbar glassy" style={{ height: 72 }}>
         <div className="container-xxl d-flex align-items-center h-100">
           <div className="d-flex align-items-center">
-            <img src="/src/assets/csit.jpg" alt="Logo" className="rounded-3 shadow-sm" style={{ height: 40, width: 40, objectFit: "cover" }} />
+            <img src="/csit.jpg" alt="Logo" className="rounded-3 shadow-sm" style={{ height: 40, width: 40, objectFit: "cover" }} onError={(e) => (e.currentTarget.src = "/src/assets/csit.jpg")} />
             <div className="ms-3 text-white fw-semibold">CSIT Competency System</div>
           </div>
           <div className="ms-auto d-flex align-items-center">
@@ -241,7 +186,7 @@ export default function EditAnnouncementPage() {
             <form className="card border-0 shadow-sm rounded-4" onSubmit={onSubmit} noValidate>
               <div className="card-body p-4 p-lg-5">
                 <div className="d-flex align-items-center justify-content-between mb-3">
-                  <h3 className="fw-semibold mb-0">แก้ไขประกาศรับสมัครนิสิต</h3>
+                  <h3 className="fw-semibold mb-0">แก้ไขประกาศ</h3>
                   <StatusBadge status={form.status} />
                 </div>
 
@@ -257,39 +202,38 @@ export default function EditAnnouncementPage() {
                   </div>
 
                   <div className="col-md-4">
-                    <label className="form-label" htmlFor="role_target">กลุ่มเป้าหมาย (Role)</label>
+                    <label className="form-label" htmlFor="role_target">กลุ่มเป้าหมาย</label>
                     <select id="role_target" name="role_target" className="form-select rounded-3" value={form.role_target} onChange={(e) => updateField("role_target", e.target.value)}>
-                      {ROLE_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
+                      {ROLE_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
                     </select>
                   </div>
 
                   <div className="col-md-4">
-                    <label className="form-label" htmlFor="department">สาขาที่เกี่ยวข้อง</label>
+                    <label className="form-label" htmlFor="activity_category">ประเภทกิจกรรม</label>
+                    <select id="activity_category" name="activity_category" className="form-select rounded-3" value={form.activity_category} onChange={(e) => updateField("activity_category", e.target.value)}>
+                      {ACTIVITY_CATS.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
+                    </select>
+                  </div>
+
+                  <div className="col-md-4">
+                    <label className="form-label" htmlFor="department">สาขา</label>
                     <select id="department" name="department" className="form-select rounded-3" value={form.department} onChange={(e) => updateField("department", e.target.value)}>
-                      {DEPTS.map((d) => (
-                        <option key={d} value={d}>{d}</option>
-                      ))}
+                      {DEPTS.map((d) => (<option key={d} value={d}>{d}</option>))}
                     </select>
                   </div>
 
                   <div className="col-md-4">
-                    <label className="form-label" htmlFor="year">ชั้นปีที่สมัครได้</label>
+                    <label className="form-label" htmlFor="year">ชั้นปี</label>
                     <select id="year" name="year" className="form-select rounded-3" value={form.year} onChange={(e) => updateField("year", e.target.value)}>
-                      <option value="">ไม่กำหนด</option>
-                      {YEARS.map((y) => (
-                        <option key={y} value={y}>{y}</option>
-                      ))}
+                      <option value="">ทุกชั้นปี</option>
+                      {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
                     </select>
                   </div>
 
                   <div className="col-md-4">
                     <label className="form-label" htmlFor="status">สถานะ</label>
                     <select id="status" name="status" className="form-select rounded-3" value={form.status} onChange={(e) => updateField("status", e.target.value)}>
-                      {STATUSES.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
+                      {STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
                     </select>
                   </div>
 
@@ -299,67 +243,54 @@ export default function EditAnnouncementPage() {
                   </div>
 
                   <div className="col-md-4">
-                    <label className="form-label" htmlFor="capacity">Capacity (ถ้าไม่กรอก = ใช้จำนวนรับ)</label>
-                    <input id="capacity" name="capacity" type="number" min={1} className="form-control rounded-3" value={form.capacity} onChange={(e) => updateField("capacity", e.target.value)} />
+                    <label className="form-label" htmlFor="deadline">ปิดรับสมัคร</label>
+                    <input id="deadline" name="deadline" type="date" className="form-control rounded-3" min={today} value={form.deadline} onChange={(e) => updateField("deadline", e.target.value)} />
                   </div>
 
-                  <div className="col-md-4">
-                    <label className="form-label" htmlFor="deadline">วันปิดรับสมัคร</label>
-                    <input id="deadline" name="deadline" type="date" className="form-control rounded-3" min={today} value={toDateInput(form.deadline)} onChange={(e) => updateField("deadline", e.target.value)} />
-                  </div>
-
-                  <div className="col-md-6">
+                  <div className="col-12">
                     <label className="form-label" htmlFor="location">สถานที่ทำงาน</label>
-                    <div className="input-group">
-                      <span className="input-group-text bg-transparent"><i className="bi bi-geo-alt" /></span>
-                      <input id="location" name="location" type="text" className="form-control rounded-end-3" value={form.location} onChange={(e) => updateField("location", e.target.value)} placeholder="เช่น ห้องแลบ 204 / ทำงานจากบ้าน" />
-                    </div>
+                    <input id="location" name="location" type="text" className="form-control rounded-3" value={form.location} onChange={(e) => updateField("location", e.target.value)} placeholder="ระบุสถานที่" />
                   </div>
 
-                  {/* Work periods */}
-                  <div className="col-12 mt-2">
+                  <div className="col-12">
                     <div className="d-flex align-items-center justify-content-between mb-2">
-                      <label className="form-label m-0">ช่วงวันที่ทำงาน / เวลา (เพิ่มได้หลายช่วง)</label>
+                      <label className="form-label m-0">ช่วงวันที่ทำงาน</label>
                       <button type="button" className="btn btn-outline-primary btn-sm rounded-pill" onClick={addPeriod}>+ เพิ่มช่วง</button>
                     </div>
-
-                    <div className="d-flex flex-column gap-2">
-                      {periods.map((p, idx) => (
-                        <div key={idx} className="card border-0 shadow-sm rounded-3">
-                          <div className="card-body">
-                            <div className="row g-2 align-items-end">
-                              <div className="col-md-3">
-                                <label className="form-label small" htmlFor={`startDate_${idx}`}>วันที่เริ่ม</label>
-                                <input id={`startDate_${idx}`} name="startDate" type="date" className="form-control rounded-3" min={today} value={toDateInput(p.startDate)} onChange={(e) => updatePeriod(idx, "startDate", e.target.value)} />
-                              </div>
-                              <div className="col-md-3">
-                                <label className="form-label small" htmlFor={`endDate_${idx}`}>วันที่สิ้นสุด</label>
-                                <input id={`endDate_${idx}`} name="endDate" type="date" className="form-control rounded-3" min={toDateInput(p.startDate) || today} value={toDateInput(p.endDate)} onChange={(e) => updatePeriod(idx, "endDate", e.target.value)} />
-                              </div>
-                              <div className="col-md-2">
-                                <label className="form-label small" htmlFor={`startTime_${idx}`}>เวลาเริ่ม</label>
-                                <input id={`startTime_${idx}`} name="startTime" type="time" className="form-control rounded-3" value={toTimeInput(p.startTime)} onChange={(e) => updatePeriod(idx, "startTime", e.target.value)} />
-                              </div>
-                              <div className="col-md-2">
-                                <label className="form-label small" htmlFor={`endTime_${idx}`}>เวลาสิ้นสุด</label>
-                                <input id={`endTime_${idx}`} name="endTime" type="time" className="form-control rounded-3" value={toTimeInput(p.endTime)} onChange={(e) => updatePeriod(idx, "endTime", e.target.value)} />
-                              </div>
-                              <div className="col-md-2 d-grid">
-                                <button type="button" className="btn btn-outline-danger rounded-3" disabled={periods.length === 1} onClick={() => removePeriod(idx)}>ลบช่วงนี้</button>
-                              </div>
+                    {periods.map((p, idx) => (
+                      <div key={idx} className="card border-0 bg-light rounded-3 mb-2">
+                        <div className="card-body p-3">
+                          <div className="row g-2 align-items-end">
+                            <div className="col-md-3">
+                              <small className="text-muted d-block mb-1">เริ่ม</small>
+                              <input type="date" className="form-control form-control-sm rounded-3" value={p.startDate} onChange={(e) => updatePeriod(idx, "startDate", e.target.value)} min={today} />
                             </div>
-                            <div className="form-text mt-2">ไม่ใส่เวลาได้ (ถือว่าเต็มวัน)</div>
+                            <div className="col-md-3">
+                              <small className="text-muted d-block mb-1">สิ้นสุด</small>
+                              <input type="date" className="form-control form-control-sm rounded-3" value={p.endDate} onChange={(e) => updatePeriod(idx, "endDate", e.target.value)} min={p.startDate || today} />
+                            </div>
+                            <div className="col-md-2">
+                              <small className="text-muted d-block mb-1">เวลาเริ่ม</small>
+                              <input type="time" className="form-control form-control-sm rounded-3" value={p.startTime} onChange={(e) => updatePeriod(idx, "startTime", e.target.value)} />
+                            </div>
+                            <div className="col-md-2">
+                              <small className="text-muted d-block mb-1">เวลาจบ</small>
+                              <input type="time" className="form-control form-control-sm rounded-3" value={p.endTime} onChange={(e) => updatePeriod(idx, "endTime", e.target.value)} />
+                            </div>
+                            <div className="col-md-2 text-end">
+                              <button type="button" className="btn btn-outline-danger btn-sm rounded-3" onClick={() => removePeriod(idx)} disabled={periods.length === 1}><i className="bi bi-trash" /></button>
+                            </div>
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
 
               <div className="card-footer bg-transparent border-0 d-flex justify-content-end gap-2 px-4 pb-4">
-                <button type="button" className="btn btn-outline-secondary rounded-pill" onClick={() => navigate(-1)} disabled={saving}>ยกเลิก</button>
-                <button type="submit" className="btn btn-primary rounded-pill" disabled={saving}>{saving ? "กำลังบันทึก…" : "บันทึกประกาศ"}</button>
+                <button type="button" className="btn btn-outline-secondary rounded-pill px-4" onClick={() => navigate(-1)} disabled={saving}>ยกเลิก</button>
+                <button type="submit" className="btn btn-primary rounded-pill px-4" disabled={saving}>{saving ? "กำลังบันทึก…" : "บันทึก"}</button>
               </div>
             </form>
           </div>
@@ -368,59 +299,36 @@ export default function EditAnnouncementPage() {
           <div className="col-12 col-lg-5">
             <div className="card shadow-sm border-0 rounded-4 overflow-hidden h-100">
               <div className="ratio" style={{ aspectRatio: "21/9", background: "linear-gradient(135deg, #6f42c1, #b388ff)", position: "relative" }}>
-                <div className="position-absolute top-0 end-0 m-2"><StatusBadge status={form.status} /></div>
-                {form.year && (<span className="badge bg-light text-dark position-absolute bottom-0 start-0 m-2 fw-bold">ชั้นปี {form.year}</span>)}
+                {form.year && <span className="badge bg-white text-dark position-absolute bottom-0 start-0 m-3 shadow-sm">ปี {form.year}</span>}
               </div>
               <div className="card-body d-flex flex-column">
-                <h5 className="mb-1 text-truncate" title={form.title || "ชื่อประกาศ"}>{form.title || "ชื่อประกาศ"}</h5>
-                <div className="small text-muted mb-2">อาจารย์: <span className="fw-medium text-dark">{user?.full_name || user?.username || "—"}</span></div>
+                <h5 className="mb-2 fw-bold text-truncate">{form.title || "ชื่อประกาศ"}</h5>
+                <div className="text-muted small mb-3">👨‍🏫 {user?.full_name || user?.username || "—"}</div>
+
                 <div className="small mb-2">
-                  <div className="text-muted">ช่วงวันที่ทำงาน:</div>
-                  {previewLines.length ? previewLines.map((ln, i) => (<div key={i} className="text-body">• {ln}</div>)) : (<span className="text-muted">ยังไม่เลือกช่วงวันทำงาน</span>)}
+                  <i className="bi bi-people me-2"></i>รับ {form.seats || "-"} คน
                 </div>
-                {form.role_target && (
-                  <div className="small mb-2">กลุ่มเป้าหมาย: <span className="fw-medium">{ROLE_OPTIONS.find((r) => r.value === form.role_target)?.label || form.role_target}</span></div>
-                )}
-                {previewDeadline && (<div className="small text-muted mb-2">ปิดรับ: {dateTH(form.deadline)}</div>)}
-                <div className="small mb-2">สาขา: <span className="fw-medium">{form.department || "—"}</span></div>
-                {form.location && (<div className="small text-muted mb-2">สถานที่: {form.location}</div>)}
-                {form.seats && (<div className="small text-muted mb-2">รับ {form.seats} คน</div>)}
-                {form.capacity && (<div className="small text-muted mb-2">Capacity {form.capacity}</div>)}
-                {form.description && (<p className="text-muted mb-0" style={{ whiteSpace: "pre-wrap" }}>{form.description}</p>)}
+                {previewLines.map((L, i) => <div key={i} className="small mb-1 text-muted"><i className="bi bi-calendar-event me-2"></i>{L}</div>)}
+                {form.deadline && <div className="small text-danger mb-2"><i className="bi bi-clock me-2"></i>ปิดรับ {toISODate(form.deadline)}</div>}
+
+                {form.description && <p className="small text-muted mt-3 pt-3 border-top">{form.description}</p>}
               </div>
             </div>
-            <div className="text-muted small mt-2">* พรีวิวนี้คือการ์ดที่จะไปแสดงในหน้า “ประกาศรับสมัคร”</div>
+            <div className="text-center mt-3 text-muted small">ตัวอย่างการแสดงผล</div>
           </div>
         </div>
       </div>
 
-      {/* style */}
-      <style>{`
-        .bg-animated{background:radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),radial-gradient(1000px 500px at 110% 10%, #e6f0ff 10%, transparent 55%),linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%);} 
-        .glassy{backdrop-filter:blur(8px);} 
-        .topbar{position:sticky;top:0;left:0;width:100%;background:linear-gradient(90deg, rgba(111,66,193,.9), rgba(142,92,255,.9));box-shadow:0 4px 16px rgba(111,66,193,.22);z-index:1040;border-bottom:1px solid rgba(255,255,255,.12);} 
-        .form-control:focus { box-shadow: 0 0 0 .2rem rgba(111,66,193,.12); border-color: #8e5cff; }
-        .ripple{position:relative;overflow:hidden;} 
-        .ripple:after{content:"";position:absolute;inset:0;border-radius:inherit;opacity:0;background:radial-gradient(circle at var(--x,50%) var(--y,50%), rgba(255,255,255,.45), transparent 40%);transform:scale(.2);transition:transform .3s, opacity .45s;pointer-events:none;} 
-        .ripple:active:after{opacity:1;transform:scale(1);transition:0s;} 
-        .ripple{--x:50%;--y:50%;} 
-        .ripple:focus-visible{outline:3px solid rgba(142,92,255,.45);outline-offset:2px;}
-      `}</style>
-
-      {/* ripple positioning script */}
-      <script
-        dangerouslySetInnerHTML={{
-          __html: `
-        document.addEventListener('pointerdown', (e) => {
+      <style>{sharedPageStyles}</style>
+      <script dangerouslySetInnerHTML={{
+        __html: `document.addEventListener('pointerdown', (e) => {
           const el = e.target.closest('.ripple');
           if (!el) return;
           const rect = el.getBoundingClientRect();
           el.style.setProperty('--x', ((e.clientX - rect.left) / rect.width * 100).toFixed(2) + '%');
           el.style.setProperty('--y', ((e.clientY - rect.top) / rect.height * 100).toFixed(2) + '%');
-        }, { passive: true });
-      `,
-        }}
-      />
+        }, { passive: true });`
+      }} />
     </div>
   );
 }

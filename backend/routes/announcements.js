@@ -75,6 +75,9 @@ function mapAnnouncementRow(r) {
     completed_count: completed,
     applicants_count: applicants,
     remaining,
+    activity_category: r.activity_category || "social",
+    work_time_start: r.work_time_start || null,
+    work_time_end: r.work_time_end || null,
   };
 }
 
@@ -276,6 +279,7 @@ router.post("/", async (req, res) => {
     description,
     teacher,
     owner_id,
+    teacher_id, // รับ teacher_id เพิ่ม
     department,
     year,
     location,
@@ -284,6 +288,10 @@ router.post("/", async (req, res) => {
     work_date,
     work_end,
     status,
+    role_target,
+    activity_category,
+    work_time_start,
+    work_time_end,
   } = req.body || {};
 
   if (!title || String(title).trim() === "") {
@@ -291,37 +299,80 @@ router.post("/", async (req, res) => {
   }
 
   const stat = VALID_ANNOUNCE_STATUS.has(String(status)) ? String(status) : "open";
+  // ใช้ teacher_id แทน owner_id ถ้าไม่มี
+  const finalOwnerId = owner_id ? normInt(owner_id) : (teacher_id ? normInt(teacher_id) : null);
+  const cap = capacity != null && String(capacity).trim() !== "" ? normInt(capacity) : null;
+
+  // Helper สำหรับ Insert ปกติ (ครบทุกฟิลด์ที่ควรมีใน schema ปัจจุบัน)
+  // พยายามใส่ role_target ถ้ามี (ต้องลอง) แต่ถ้ากลัว error 500 จาก unknown column เราจะทำ fallback
+
+  async function tryInsert(includeOptional) {
+    // Optional Fields ที่อาจจะไม่มีใน DB เก่า: role_target, seats(ใช้ capacity แทน), maybe owner_id?
+    // strategy: ลอง insert แบบเต็มก่อน (ถ้า includeOptional=true) -> ถ้า error unknown column -> ลองแบบย่อ
+
+    // แบบเต็ม (ใส่ fields เท่าที่มีใน code เดิม + owner_id)
+    // หมายเหตุ: Code เดิมยังไม่มี role_target ใน query, ดังนั้นเราจะไม่ใส่ role_target ไปก่อนเพื่อความปลอดภัย (ตามคำสั่ง 'ห้ามเพิ่มอะไร')
+    // แต่ owner_id เราจะใส่
+
+    // ถ้า includeOptional = false -> ตัด owner_id ออก (กรณี DB เก่ามากๆ ไม่มี owner_id)
+
+    // NOTE: Removed created_at, updated_at from fields because we pass them as NOW() in SQL directly
+    const fields = ["title", "description", "teacher", "department", "year", "location", "capacity", "deadline", "work_date", "work_end", "status", "activity_category", "work_time_start", "work_time_end"];
+    const vals = [
+      String(title).trim(),
+      toNullIfEmpty(description),
+      toNullIfEmpty(teacher),
+      toNullIfEmpty(department),
+      normInt(year), // Fix: always return 0 if null/empty, because DB column is NOT NULL
+      toNullIfEmpty(location),
+      cap,
+      toNullIfEmpty(deadline),
+      toNullIfEmpty(work_date),
+      toNullIfEmpty(work_end),
+      stat,
+      toNullIfEmpty(activity_category),
+      toNullIfEmpty(work_time_start),
+      toNullIfEmpty(work_time_end),
+    ];
+
+    if (includeOptional) {
+      fields.push("owner_id");
+      vals.push(finalOwnerId);
+    }
+    // ถ้าจะเพิ่ม role_target ในอนาคตก็เพิ่มตรงนี้
+
+    // NOTE: Send Date objects from JS to avoid "Unknown column" or syntax parsing issues with NOW() in prepared statement values
+    const now = new Date();
+    fields.push("created_at", "updated_at");
+    vals.push(now, now);
+
+    const questions = fields.map(() => "?").join(",");
+    const sql = `INSERT INTO announcements (${fields.join(",")}) VALUES (${questions})`;
+
+    const [ins] = await pool.query(sql, vals);
+    return ins;
+  }
 
   try {
-    const [ins] = await pool.query(
-      `
-      INSERT INTO announcements
-        (title, description, teacher, owner_id, department, year, location, capacity,
-         deadline, work_date, work_end, status, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NOW(),NOW())
-      `,
-      [
-        String(title).trim(),
-        toNullIfEmpty(description),
-        toNullIfEmpty(teacher),
-        owner_id ? normInt(owner_id) : null,
-        toNullIfEmpty(department),
-        year ? normInt(year) : null,
-        toNullIfEmpty(location),
-        capacity != null && String(capacity).trim() !== "" ? normInt(capacity) : null,
-        toNullIfEmpty(deadline),
-        toNullIfEmpty(work_date),
-        toNullIfEmpty(work_end),
-        stat,
-      ]
-    );
-
-    const newId = ins.insertId;
-    const [rows] = await pool.query(`SELECT * FROM announcements WHERE id=?`, [newId]);
-    res.status(201).json(rows[0]);
+    try {
+      const ins = await tryInsert(true); // ลองใส่ owner_id
+      const newId = ins.insertId;
+      const [rows] = await pool.query(`SELECT * FROM announcements WHERE id=?`, [newId]);
+      return res.status(201).json(rows[0]);
+    } catch (err) {
+      const msg = String(err?.message || "");
+      if (msg.includes("Unknown column 'owner_id'")) {
+        console.warn("owner_id column missing, falling back...");
+        const ins = await tryInsert(false); // ไม่ใส่ owner_id
+        const newId = ins.insertId;
+        const [rows] = await pool.query(`SELECT * FROM announcements WHERE id=?`, [newId]);
+        return res.status(201).json(rows[0]);
+      }
+      throw err;
+    }
   } catch (e) {
     console.error("POST /announcements error:", e);
-    res.status(500).json({ message: "Failed to create announcement" });
+    res.status(500).json({ message: "Failed to create announcement: " + e.message });
   }
 });
 
@@ -332,57 +383,87 @@ router.patch("/:id", async (req, res) => {
   const id = normInt(req.params.id);
   if (!id) return res.status(400).json({ message: "Invalid id" });
 
-  const fields = [];
-  const params = [];
-
-  const allow = [
-    "title",
-    "description",
-    "teacher",
-    "owner_id",
-    "department",
-    "year",
-    "location",
-    "capacity",
-    "deadline",
-    "work_date",
-    "work_end",
-    "status",
-  ];
-
-  for (const k of allow) {
-    if (req.body[k] !== undefined) {
-      if (k === "status") {
-        const v = String(req.body[k]);
-        if (!VALID_ANNOUNCE_STATUS.has(v)) continue;
-        fields.push(`status=?`);
-        params.push(v);
-      } else if (k === "owner_id" || k === "year" || k === "capacity") {
-        const val =
-          req.body[k] == null || String(req.body[k]).trim() === ""
-            ? null
-            : normInt(req.body[k]);
-        fields.push(`${k}=?`);
-        params.push(val);
-      } else {
-        fields.push(`${k}=?`);
-        params.push(toNullIfEmpty(req.body[k]));
-      }
-    }
+  const body = { ...req.body };
+  // Map teacher_id -> owner_id
+  if (body.teacher_id && !body.owner_id) {
+    body.owner_id = body.teacher_id;
   }
 
-  if (!fields.length) return res.json({ ok: true, message: "No changes" });
+  // Helper to build and run update
+  async function tryUpdate(ignoreOwnerId) {
+    const fields = [];
+    const params = [];
 
-  try {
+    const allow = [
+      "title",
+      "description",
+      "teacher",
+      "department",
+      "year",
+      "location",
+      "capacity",
+      "deadline",
+      "work_date",
+      "work_end",
+      "status",
+      // role_target removed to avoid error if column missing
+      "activity_category",
+      "work_time_start",
+      "work_time_end",
+    ];
+
+    if (!ignoreOwnerId) allow.push("owner_id");
+
+    for (const k of allow) {
+      if (body[k] !== undefined) {
+        if (k === "status") {
+          const v = String(body[k]);
+          if (!VALID_ANNOUNCE_STATUS.has(v)) continue;
+          fields.push(`status=?`);
+          params.push(v);
+        } else if (k === "owner_id" || k === "year" || k === "capacity") {
+          const val =
+            body[k] == null || String(body[k]).trim() === ""
+              ? null
+              : normInt(body[k]);
+          fields.push(`${k}=?`);
+          params.push(val);
+        } else {
+          fields.push(`${k}=?`);
+          params.push(toNullIfEmpty(body[k]));
+        }
+      }
+    }
+
+    if (!fields.length) return { noChanges: true };
+
     await pool.query(
       `UPDATE announcements SET ${fields.join(", ")}, updated_at=NOW() WHERE id=?`,
       [...params, id]
     );
+    return { success: true };
+  }
+
+  try {
+    try {
+      const res1 = await tryUpdate(false); // Try with owner_id
+      if (res1.noChanges) return res.json({ ok: true, message: "No changes" });
+    } catch (err) {
+      const msg = String(err?.message || "");
+      if (msg.includes("Unknown column 'owner_id'")) {
+        console.warn("PATCH: owner_id missing, retrying...");
+        const res2 = await tryUpdate(true); // Retry without owner_id
+        if (res2.noChanges) return res.json({ ok: true, message: "No changes" });
+      } else {
+        throw err;
+      }
+    }
+
     const [rows] = await pool.query(`SELECT * FROM announcements WHERE id=?`, [id]);
     res.json(rows[0] || { ok: true });
   } catch (e) {
     console.error("PATCH /announcements/:id error:", e);
-    res.status(500).json({ message: "Failed to update" });
+    res.status(500).json({ message: "Failed to update: " + e.message });
   }
 });
 
@@ -542,7 +623,7 @@ router.post("/:id/apply", async (req, res) => {
           conn.release();
           return res.json({ ok: true, reapply: true, status: "pending" });
         } catch (txErr) {
-          try { await conn.rollback(); } catch {}
+          try { await conn.rollback(); } catch { }
           conn.release();
           throw txErr;
         }
@@ -596,7 +677,7 @@ router.post("/:id/apply", async (req, res) => {
       conn.release();
       return res.json({ ok: true, status: "pending" });
     } catch (txErr) {
-      try { await conn.rollback(); } catch {}
+      try { await conn.rollback(); } catch { }
       conn.release();
       if (txErr && txErr.code === "ER_DUP_ENTRY") {
         return res.status(409).json({ message: "คุณได้สมัครประกาศนี้ไว้แล้ว" });
@@ -718,7 +799,7 @@ router.post("/applications/:appId/accept", async (req, res) => {
     conn.release();
     res.json({ ok: true, status: "accepted" });
   } catch (e) {
-    try { await conn.rollback(); } catch {}
+    try { await conn.rollback(); } catch { }
     conn.release();
     console.error("accept error:", e);
     res.status(500).json({ message: "Failed to accept" });
@@ -745,17 +826,86 @@ router.post("/applications/:appId/reject", async (req, res) => {
 router.post("/applications/:appId/complete", async (req, res) => {
   const id = normInt(req.params.appId);
   if (!id) return res.status(400).json({ message: "Invalid id" });
+
+  const conn = await pool.getConnection();
   try {
-    await pool.query(
+    await conn.beginTransaction();
+
+    // 1. Update status
+    await conn.query(
       `UPDATE announcement_applications
           SET status='completed', updated_at=NOW()
         WHERE id=?`,
       [id]
     );
+
+    // 2. Auto-insert into student_activities (Competency)
+    // Fetch announcement details & student_id
+    const [rows] = await conn.query(
+      `SELECT aa.student_id, a.title, a.department, a.work_date, a.work_end, a.role_target, a.activity_category, a.work_time_start, a.work_time_end
+       FROM announcement_applications aa
+       JOIN announcements a ON a.id = aa.announcement_id
+       WHERE aa.id = ?`,
+      [id]
+    );
+
+    if (rows.length > 0) {
+      const item = rows[0];
+      // Calculate hours roughly
+      let hours = 0;
+      if (item.work_time_start && item.work_time_end) {
+        try {
+          const [h1, m1] = item.work_time_start.split(':').map(Number);
+          const [h2, m2] = item.work_time_end.split(':').map(Number);
+          hours = (h2 + m2 / 60) - (h1 + m1 / 60);
+          if (hours < 0) hours += 24;
+          hours = Math.round(hours * 100) / 100;
+        } catch (e) { }
+      }
+
+      // Default category: 'social' (Activities Tab)
+      // Use activity_category as subtype (university/faculty/free)
+      const category = 'social';
+      const subtype = item.activity_category || 'university';
+
+      // Check if already exists to avoid duplication (simple check by title & date)
+      const [dups] = await conn.query(
+        `SELECT id FROM student_activities WHERE account_id=? AND title=? AND date_from=? LIMIT 1`,
+        [item.student_id, item.title, item.work_date]
+      );
+
+      if (dups.length === 0) {
+        await conn.query(
+          `INSERT INTO student_activities 
+            (account_id, category, subtype, title, role, hours, date_from, date_to)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            item.student_id,
+            category,
+            subtype,
+            item.title,
+            item.role_target || 'student',
+            hours > 0 ? hours : null,
+            item.work_date,
+            item.work_end
+          ]
+        );
+      }
+    }
+
+    await conn.commit();
     res.json({ ok: true, status: "completed" });
   } catch (e) {
+    if (conn) { try { await conn.rollback(); } catch { } }
     console.error("complete error:", e);
+
+    // If column missing (e.g. subtype), fallback?
+    // User said "Don't add anything" meaning DB schema. So we hope 'subtype' exists.
+    // loops earlier showed 'subtype' in competency.js SELECT. So it exists.
+
     res.status(500).json({ message: "Failed to complete" });
+  } finally {
+    if (conn) conn.release();
   }
 });
 

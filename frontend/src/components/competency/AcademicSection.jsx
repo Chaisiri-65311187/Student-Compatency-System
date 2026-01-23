@@ -201,7 +201,7 @@ export default function AcademicSection({ user }) {
         .fire({ icon: "success", title: "บันทึกด้านวิชาการสำเร็จ" });
     } catch (e) {
       console.error(e);
-      if (Swal.isVisible()) { try { await Swal.close(); } catch {} }
+      if (Swal.isVisible()) { try { await Swal.close(); } catch { } }
       await Swal.fire({
         icon: "error",
         title: "บันทึกไม่สำเร็จ",
@@ -210,45 +210,47 @@ export default function AcademicSection({ user }) {
       });
     } finally {
       setSaving(false);
-      if (Swal.isVisible()) { try { await Swal.close(); } catch {} }
+      if (Swal.isVisible()) { try { await Swal.close(); } catch { } }
     }
   };
 
   /* === UI Helpers === */
   const renderTable = (list, y, s) => (
     <>
-      <table className="table align-middle">
-        <thead>
-          <tr>
-            <th style={{ width: 120 }}>รหัส</th>
-            <th>ชื่อวิชา</th>
-            <th style={{ width: 90 }}>หน่วยกิต</th>
-            <th style={{ width: 180 }}>เกรด</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(list || []).map(c => (
-            <tr key={`${y}-${s}-${c.code}`}>
-              <td>{c.code}</td>
-              <td>{c.name_th}</td>
-              <td>{c.credit ?? "-"}</td>
-              <td>
-                <select
-                  className="form-select"
-                  value={grades[c.code] || ""}
-                  onChange={e => onChangeGrade(c.code, e.target.value)}
-                >
-                  {/* ค่า null/ยังไม่ออก */}
-                  <option value="">— ยังไม่ออก —</option>
-                  {GRADE_OPTIONS.filter(g => g !== "").map(g => (
-                    <option key={g} value={g}>{g}</option>
-                  ))}
-                </select>
-              </td>
+      <div className="table-responsive rounded-4 shadow-sm border-0">
+        <table className="table align-middle table-hover mb-0">
+          <thead className="table-light">
+            <tr>
+              <th style={{ width: 120, borderTop: "none" }}>รหัส</th>
+              <th style={{ borderTop: "none" }}>ชื่อวิชา</th>
+              <th style={{ width: 90, borderTop: "none" }}>หน่วยกิต</th>
+              <th style={{ width: 180, borderTop: "none" }}>เกรด</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {(list || []).map(c => (
+              <tr key={`${y}-${s}-${c.code}`}>
+                <td className="fw-semibold text-muted">{c.code}</td>
+                <td>{c.name_th}</td>
+                <td className="text-muted">{c.credit ?? "-"}</td>
+                <td>
+                  <select
+                    className="form-select border-0 bg-light rounded-3"
+                    value={grades[c.code] || ""}
+                    onChange={e => onChangeGrade(c.code, e.target.value)}
+                  >
+                    {/* ค่า null/ยังไม่ออก */}
+                    <option value="">— ยังไม่ออก —</option>
+                    {GRADE_OPTIONS.filter(g => g !== "").map(g => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 
@@ -307,7 +309,7 @@ export default function AcademicSection({ user }) {
       })}
 
       <div className="d-flex gap-2 mt-3">
-        <button className="btn btn-primary" onClick={onSaveAll} disabled={saving}>
+        <button className="btn btn-primary rounded-pill px-4 shadow-sm fw-semibold" onClick={onSaveAll} disabled={saving} style={{ background: "linear-gradient(135deg, #0d6efd, #0a58ca)", border: "none" }}>
           {saving && <span className="spinner-border spinner-border-sm me-2" />}
           บันทึกทั้งหมด
         </button>

@@ -18,6 +18,9 @@ import {
   scoreLang,
   scoreTech,
   calcAllCompetencies,
+  scoreSocialActivities,
+  scoreCollaboration,
+  normalizePeerScore,
   toArray,
 } from "../utils/scoring";
 
@@ -62,7 +65,7 @@ function useStudentData(userId) {
     setLoading(true);
     try {
       const prof = await getCompetencyProfile(userId);
-      
+
       // ดึง Academic (ทุกปีทุกเทอม)
       const yMax = prof?.account?.year_level || 4;
       const acadJobs = [];
@@ -72,7 +75,7 @@ function useStudentData(userId) {
         }
       }
       const allAcad = (await Promise.all(acadJobs)).filter(Boolean);
-      
+
       // คำนวณค่าเฉลี่ย Academic
       let sumScore = 0, sumGpa = 0, sumCore = 0, n = 0;
       allAcad.forEach(r => {
@@ -105,13 +108,13 @@ function useStudentData(userId) {
         const rec = await peer.received(userId, periodKey);
         const peerAvg = Number(rec?.avg ?? rec?.summary?.peer_avg ?? 0) || 0;
         const peerCount = Number(rec?.count ?? rec?.summary?.peer_count ?? 0) || 0;
-        
+
         let selfAvg = 0;
         try {
           const self = await (peer.self ? peer.self(userId, periodKey) : peer.given(userId, periodKey));
           selfAvg = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
         } catch { /* ignore self error */ }
-        
+
         collabData = { peerAvg, selfAvg, peerCount };
       } catch { /* ignore peer error */ }
 
@@ -139,45 +142,48 @@ function useStudentData(userId) {
 function useCompetencyScores(data) {
   return useMemo(() => {
     const { academic, profile, langLatest, langAll, trains, socialActs, collab } = data;
-    
-    // 1. Academic
+
+    // 1. Academic (0-100%)
     const acadObj = scoreAcademic({
       manualGpa: Number(profile?.account?.manual_gpa),
       scoreGpa25: Number(academic?.score_gpa ?? 0),
       scoreCore15: Number(academic?.score_core ?? 0),
     });
-    const acadScore = acadObj.score;
+    const pAcad = acadObj.percent;
 
-    // 2. Language & Technology
-    const langScore = scoreLang(langLatest?.level)?.score ?? 0;
-    const techScore = scoreTech(
-      trains.length, 
-      Number(langAll?.ICT?.score_raw ?? 0), 
-      Number(langAll?.ITPE?.score_raw ?? 0), 
+    // 2. Language (0-100%) - ใช้ CEPT level
+    const langObj = scoreLang(langLatest?.level || langAll?.CEPT?.level);
+    const pLang = langObj.percent;
+
+    // 3. Technology (0-100%)
+    const techObj = scoreTech(
+      trains.length,
+      Number(langAll?.ICT?.score_raw ?? 0),
+      Number(langAll?.ITPE?.score_raw ?? 0),
       langAll?.CEPT ?? null
-    )?.score ?? 0;
+    );
+    const pTech = techObj.percent;
 
-    // 3. Base Calculation (Acad, Lang, Tech, Social)
-    const base = calcAllCompetencies({
-      acadScore, langScore, techScore,
-      socialActs,
-      commActs: [], 
+    // 4. Social Activities (0-100%) - ใช้ฟังก์ชันใหม่ที่แยกตามประเภทกิจกรรม
+    const socialResult = scoreSocialActivities(socialActs);
+    const pSoc = socialResult.totalPercent;
+
+    // 5. Collaboration (Peer 80% + Self 20%)
+    const collabResult = scoreCollaboration({
+      self: collab.selfAvg || 0,
+      peerAvg: collab.peerAvg || 0
     });
+    const pCollab = collabResult.score;
 
-    // 4. Collaboration (Peer 80% + Self 20%)
-    const collabPct = Math.round(0.8 * (collab.peerAvg || 0) + 0.2 * (collab.selfAvg || 0));
-
-    // 5. Total
-    const pAcad = base.each.acad ?? 0;
-    const pLang = base.each.lang ?? 0;
-    const pTech = base.each.tech ?? 0;
-    const pSoc = base.each.social ?? 0;
-    
-    const total5 = Math.round((pAcad + pLang + pTech + pSoc + collabPct) / 5);
+    // Total (5 ด้าน ถ่วงน้ำหนักเท่ากัน)
+    const total5 = Math.round((pAcad + pLang + pTech + pSoc + pCollab) / 5);
 
     return {
-      each: { acad: pAcad, lang: pLang, tech: pTech, social: pSoc, collab: collabPct },
+      each: { acad: pAcad, lang: pLang, tech: pTech, social: pSoc, collab: pCollab },
       total: total5,
+      breakdown: {
+        social: socialResult.breakdown,
+      }
     };
   }, [data]);
 }
@@ -191,13 +197,13 @@ const EditProfileModal = ({ isOpen, onClose, userId, onUpdateSuccess }) => {
   const [error, setError] = useState("");
   // State สำหรับฟอร์ม
   const [form, setForm] = useState({
-    full_name: "", 
-    email: "",     
-    phone: "",     
-    line_id: "",   
-    facebook: "",  
-    github: "",    
-    avatar_url: "" 
+    full_name: "",
+    email: "",
+    phone: "",
+    line_id: "",
+    facebook: "",
+    github: "",
+    avatar_url: ""
   });
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
@@ -247,12 +253,12 @@ const EditProfileModal = ({ isOpen, onClose, userId, onUpdateSuccess }) => {
         const up = await uploadAvatar(userId, file);
         if (up?.url) avatarUrl = up.url;
       }
-      const payload = { 
-        ...form, 
-        full_name: form.full_name?.trim(), 
-        avatar_url: avatarUrl 
+      const payload = {
+        ...form,
+        full_name: form.full_name?.trim(),
+        avatar_url: avatarUrl
       };
-      
+
       await updateAccount(userId, payload);
       onUpdateSuccess(payload);
       onClose();
@@ -276,15 +282,15 @@ const EditProfileModal = ({ isOpen, onClose, userId, onUpdateSuccess }) => {
           <form onSubmit={handleSubmit}>
             <div className="modal-body">
               {error && <div className="alert alert-danger">{error}</div>}
-              
+
               <div className="row g-3">
                 {/* --- ซ้าย: รูปโปรไฟล์ --- */}
                 <div className="col-12 col-md-4 text-center">
                   <div className="rounded-4 border mx-auto overflow-hidden bg-light position-relative" style={{ width: "100%", aspectRatio: "1/1" }}>
-                    <img 
-                      src={preview || "/src/assets/csit.jpg"} 
-                      alt="avatar" 
-                      className="w-100 h-100 object-fit-cover" 
+                    <img
+                      src={preview || "/src/assets/csit.jpg"}
+                      alt="avatar"
+                      className="w-100 h-100 object-fit-cover"
                       onError={(e) => (e.currentTarget.src = "/src/assets/csit.jpg")}
                     />
                   </div>
@@ -297,83 +303,83 @@ const EditProfileModal = ({ isOpen, onClose, userId, onUpdateSuccess }) => {
                 {/* --- ขวา: ฟอร์มข้อมูล --- */}
                 <div className="col-12 col-md-8">
                   <div className="row g-2">
-                    
+
                     {/* ชื่อ-นามสกุล */}
                     <div className="col-12">
-                       <div className="form-floating">
-                         <input 
-                            className="form-control rounded-3" 
-                            id="full_name"
-                            value={form.full_name} 
-                            onChange={e => setForm({...form, full_name: e.target.value})} 
-                            placeholder="ชื่อ–นามสกุล" 
-                         />
-                         <label htmlFor="full_name">ชื่อ–นามสกุล (แสดงผล)</label>
-                       </div>
+                      <div className="form-floating">
+                        <input
+                          className="form-control rounded-3"
+                          id="full_name"
+                          value={form.full_name}
+                          onChange={e => setForm({ ...form, full_name: e.target.value })}
+                          placeholder="ชื่อ–นามสกุล"
+                        />
+                        <label htmlFor="full_name">ชื่อ–นามสกุล (แสดงผล)</label>
+                      </div>
                     </div>
 
                     {/* อีเมล & เบอร์โทร */}
                     <div className="col-md-6">
-                        <div className="form-floating">
-                          <input 
-                            className="form-control rounded-3" 
-                            id="email"
-                            value={form.email} 
-                            onChange={e => setForm({...form, email: e.target.value})} 
-                            placeholder="อีเมล"
-                          />
-                          <label htmlFor="email">อีเมล</label>
-                        </div>
+                      <div className="form-floating">
+                        <input
+                          className="form-control rounded-3"
+                          id="email"
+                          value={form.email}
+                          onChange={e => setForm({ ...form, email: e.target.value })}
+                          placeholder="อีเมล"
+                        />
+                        <label htmlFor="email">อีเมล</label>
+                      </div>
                     </div>
                     <div className="col-md-6">
-                        <div className="form-floating">
-                          <input 
-                            className="form-control rounded-3" 
-                            id="phone"
-                            value={form.phone} 
-                            onChange={e => setForm({...form, phone: e.target.value})} 
-                            placeholder="เบอร์โทร"
-                          />
-                          <label htmlFor="phone">เบอร์โทร</label>
-                        </div>
+                      <div className="form-floating">
+                        <input
+                          className="form-control rounded-3"
+                          id="phone"
+                          value={form.phone}
+                          onChange={e => setForm({ ...form, phone: e.target.value })}
+                          placeholder="เบอร์โทร"
+                        />
+                        <label htmlFor="phone">เบอร์โทร</label>
+                      </div>
                     </div>
 
                     {/* Socials */}
                     <div className="col-md-4">
-                        <div className="form-floating">
-                          <input 
-                            className="form-control rounded-3" 
-                            id="line_id"
-                            value={form.line_id} 
-                            onChange={e => setForm({...form, line_id: e.target.value})} 
-                            placeholder="Line ID"
-                          />
-                          <label htmlFor="line_id">Line ID</label>
-                        </div>
+                      <div className="form-floating">
+                        <input
+                          className="form-control rounded-3"
+                          id="line_id"
+                          value={form.line_id}
+                          onChange={e => setForm({ ...form, line_id: e.target.value })}
+                          placeholder="Line ID"
+                        />
+                        <label htmlFor="line_id">Line ID</label>
+                      </div>
                     </div>
                     <div className="col-md-4">
-                        <div className="form-floating">
-                          <input 
-                            className="form-control rounded-3" 
-                            id="facebook"
-                            value={form.facebook} 
-                            onChange={e => setForm({...form, facebook: e.target.value})} 
-                            placeholder="Facebook"
-                          />
-                          <label htmlFor="facebook">Facebook</label>
-                        </div>
+                      <div className="form-floating">
+                        <input
+                          className="form-control rounded-3"
+                          id="facebook"
+                          value={form.facebook}
+                          onChange={e => setForm({ ...form, facebook: e.target.value })}
+                          placeholder="Facebook"
+                        />
+                        <label htmlFor="facebook">Facebook</label>
+                      </div>
                     </div>
                     <div className="col-md-4">
-                        <div className="form-floating">
-                          <input 
-                            className="form-control rounded-3" 
-                            id="github"
-                            value={form.github} 
-                            onChange={e => setForm({...form, github: e.target.value})} 
-                            placeholder="GitHub"
-                          />
-                          <label htmlFor="github">GitHub</label>
-                        </div>
+                      <div className="form-floating">
+                        <input
+                          className="form-control rounded-3"
+                          id="github"
+                          value={form.github}
+                          onChange={e => setForm({ ...form, github: e.target.value })}
+                          placeholder="GitHub"
+                        />
+                        <label htmlFor="github">GitHub</label>
+                      </div>
                     </div>
 
                   </div>
@@ -411,7 +417,7 @@ const RadarChartCard = ({ scores }) => {
           <h5 className="mb-0">เรดาร์สมรรถนะ 5 ด้าน</h5>
           <div className="badge text-bg-primary rounded-pill">คะแนนรวม : {scores?.total ?? 0}/100 </div>
         </div>
-        
+
         <div style={{ maxHeight: '440px' }}>
           <Radar5
             labels={categories.map(c => c.label)}
@@ -425,9 +431,9 @@ const RadarChartCard = ({ scores }) => {
 
         <div className="d-flex flex-wrap gap-2 mt-3 justify-content-center">
           {categories.map(({ key, label }) => (
-              <span key={key} className="badge rounded-pill bg-light text-dark border">
-                  {label} {scores?.each?.[key] ?? 0}
-              </span>
+            <span key={key} className="badge rounded-pill bg-light text-dark border">
+              {label} {scores?.each?.[key] ?? 0}
+            </span>
           ))}
         </div>
       </div>
@@ -442,14 +448,14 @@ const RadarChartCard = ({ scores }) => {
 export default function StudentProfilePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  
+
   // Logic Hooks
-  const { 
-    loading, profile, academic, langLatest, langAll, trains, socialActs, collab, periodKey, refetch 
+  const {
+    loading, profile, academic, langLatest, langAll, trains, socialActs, collab, periodKey, refetch
   } = useStudentData(user?.id);
 
-  const scores = useCompetencyScores({ 
-    academic, profile, langLatest, langAll, trains, socialActs, collab 
+  const scores = useCompetencyScores({
+    academic, profile, langLatest, langAll, trains, socialActs, collab
   });
 
   // UI State
@@ -460,7 +466,7 @@ export default function StudentProfilePage() {
   const avatar = resolveAvatarUrl(acct?.avatar_url);
 
   const handleUpdateSuccess = (updatedFields) => {
-    refetch(); 
+    refetch();
     alert("บันทึกโปรไฟล์สำเร็จ");
   };
 
@@ -496,11 +502,11 @@ export default function StudentProfilePage() {
           <div className="row g-4">
             {/* Left Column: Profile Info */}
             <div className="col-12 col-lg-5">
-              <ProfileInfoCard 
-                acct={acct} 
-                avatar={avatar} 
-                langAll={langAll} 
-                trainsCount={trains.length} 
+              <ProfileInfoCard
+                acct={acct}
+                avatar={avatar}
+                langAll={langAll}
+                trainsCount={trains.length}
                 socialCount={socialActs.length}
                 collab={collab}
                 periodKey={periodKey}
@@ -517,11 +523,11 @@ export default function StudentProfilePage() {
       </div>
 
       {/* Edit Modal */}
-      <EditProfileModal 
-        isOpen={editOpen} 
-        onClose={() => setEditOpen(false)} 
-        userId={user?.id} 
-        onUpdateSuccess={handleUpdateSuccess} 
+      <EditProfileModal
+        isOpen={editOpen}
+        onClose={() => setEditOpen(false)}
+        userId={user?.id}
+        onUpdateSuccess={handleUpdateSuccess}
       />
 
       <GlobalStyles />
@@ -575,12 +581,12 @@ const ProfileInfoCard = ({ acct, avatar, langAll, trainsCount, socialCount, coll
       <div className="mt-3 small bg-white bg-opacity-50 p-2 rounded-3">
         <div className="text-muted fw-bold">ทำงานร่วมกับผู้อื่น (รอบ {periodKey})</div>
         <div className="d-flex justify-content-between">
-            <span>Peer Avg: <b>{Math.round(collab.peerAvg)}</b></span>
-            <span>Self Avg: <b>{Math.round(collab.selfAvg)}</b></span>
+          <span>Peer Avg: <b>{Math.round(collab.peerAvg)}</b></span>
+          <span>Self Avg: <b>{Math.round(collab.selfAvg)}</b></span>
         </div>
-        <div className="text-muted fst-italic mt-1" style={{fontSize: '0.8rem'}}>({collab.peerCount} คนประเมิน)</div>
+        <div className="text-muted fst-italic mt-1" style={{ fontSize: '0.8rem' }}>({collab.peerCount} คนประเมิน)</div>
       </div>
-      
+
       <div className="mt-2 small text-muted text-end">กิจกรรมสังคม {socialCount} รายการ</div>
     </div>
   </div>

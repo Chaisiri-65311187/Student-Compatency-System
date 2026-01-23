@@ -1,44 +1,38 @@
-// src/pages/ApplicantsManagePage.jsx — ปุ่ม "เสร็จสิ้นงาน" + สถานะโชว์ "ได้รับชั่วโมงแล้ว" + โควต้า = accepted+completed
+// src/pages/ApplicantsManagePage.jsx — Modern UI with gradient header and stats
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getAnnouncement, listApplicants, changeApplicationStatus } from "../../services/announcementsApi";
 import Swal from "sweetalert2";
 
-/* === คำที่ใช้แสดงสำหรับสถานะ === */
+/* === Status Labels === */
 const COMPLETED_STATUS_TEXT = "ได้รับชั่วโมงแล้ว";
 
 const STATUS_LABEL = {
-  pending:   "รอดำเนินการ",
-  accepted:  "อนุมัติแล้ว",
-  rejected:  "ปฏิเสธแล้ว",
-  completed: COMPLETED_STATUS_TEXT, // ✅ เปลี่ยน label ของ completed
+  pending: "รอดำเนินการ",
+  accepted: "อนุมัติแล้ว",
+  rejected: "ปฏิเสธแล้ว",
+  completed: COMPLETED_STATUS_TEXT,
 };
+
 const STATUS_CLASS = {
-  pending:  "badge text-bg-secondary",
-  accepted: "badge text-bg-success",
-  rejected: "badge text-bg-danger",
-  completed:"badge text-bg-info",
+  pending: "bg-warning text-dark",
+  accepted: "bg-success",
+  rejected: "bg-danger",
+  completed: "bg-info",
 };
 
 const StatusBadge = ({ status }) => (
-  <span className={STATUS_CLASS[status] || "badge text-bg-secondary"}>
+  <span className={`badge rounded-pill ${STATUS_CLASS[status] || "bg-secondary"}`}>
+    {status === "pending" && "⏳ "}
+    {status === "accepted" && "✅ "}
+    {status === "rejected" && "❌ "}
+    {status === "completed" && "🏆 "}
     {STATUS_LABEL[status] || status}
   </span>
 );
 
-const Chip = ({ active, onClick, children }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className={`btn btn-sm ${active ? "btn-primary" : "btn-outline-secondary"}`}
-    style={{ borderRadius: 999 }}
-  >
-    {children}
-  </button>
-);
-
 export default function ApplicantsManagePage() {
-  const { id } = useParams(); // announcement id
+  const { id } = useParams();
   const navigate = useNavigate();
 
   const [ann, setAnn] = useState(null);
@@ -47,9 +41,8 @@ export default function ApplicantsManagePage() {
   const [err, setErr] = useState("");
   const [search, setSearch] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all"); // all | pending | accepted | rejected | completed
-  const [actingId, setActingId] = useState(null); // แสดงสปินเนอร์เฉพาะแถวที่กำลังกด
-  const [liveMsg, setLiveMsg] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [actingId, setActingId] = useState(null);
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 250);
@@ -76,91 +69,61 @@ export default function ApplicantsManagePage() {
     })();
   }, [id]);
 
-  const acceptedCount  = useMemo(() => rows.filter((r) => r.status === "accepted").length,  [rows]);
-  const pendingCount   = useMemo(() => rows.filter((r) => r.status === "pending").length,   [rows]);
-  const rejectedCount  = useMemo(() => rows.filter((r) => r.status === "rejected").length,  [rows]);
-  const completedCount = useMemo(() => rows.filter((r) => r.status === "completed").length, [rows]);
-
-  // ✅ โควต้าที่นั่งที่ถูกใช้จริง = accepted + completed (กันอนุมัติเกิน)
-  const occupiedCount  = useMemo(
-    () => rows.filter((r) => r.status === "accepted" || r.status === "completed").length,
-    [rows]
-  );
+  // Stats
+  const stats = useMemo(() => ({
+    total: rows.length,
+    pending: rows.filter(r => r.status === "pending").length,
+    accepted: rows.filter(r => r.status === "accepted").length,
+    rejected: rows.filter(r => r.status === "rejected").length,
+    completed: rows.filter(r => r.status === "completed").length,
+    occupied: rows.filter(r => r.status === "accepted" || r.status === "completed").length,
+  }), [rows]);
 
   const filtered = useMemo(() => {
     const kw = searchDebounced.toLowerCase();
-    return rows.filter((r) => {
-      const byKW =
-        !kw ||
+    return rows.filter(r => {
+      const byKW = !kw ||
         String(r.username || "").toLowerCase().includes(kw) ||
         String(r.full_name || "").toLowerCase().includes(kw) ||
-        String(STATUS_LABEL[r.status] || r.status || "").toLowerCase().includes(kw); // ค้นหาคำไทยได้
-      const byStatus = statusFilter === "all" ? true : r.status === statusFilter;
+        String(STATUS_LABEL[r.status] || r.status || "").toLowerCase().includes(kw);
+      const byStatus = statusFilter === "all" || r.status === statusFilter;
       return byKW && byStatus;
     });
   }, [rows, searchDebounced, statusFilter]);
 
   const capacity = ann?.capacity ?? null;
-  const remaining = ann?.remaining ?? (capacity != null ? Math.max(0, capacity - occupiedCount) : null);
-  const progressPct =
-    capacity != null && capacity > 0 ? Math.min(100, Math.round((occupiedCount / capacity) * 100)) : null;
-
-  const canAcceptMore = capacity == null || occupiedCount < capacity;
-
-  const progressColor = (() => {
-    if (progressPct == null) return "bg-secondary";
-    if (progressPct < 70) return "bg-success";
-    if (progressPct < 90) return "bg-warning";
-    return "bg-danger";
-  })();
+  const remaining = capacity != null ? Math.max(0, capacity - stats.occupied) : null;
+  const progressPct = capacity ? Math.min(100, Math.round((stats.occupied / capacity) * 100)) : null;
+  const canAcceptMore = capacity == null || stats.occupied < capacity;
 
   const doAction = async (app, action) => {
-    // guard: ที่นั่งเต็ม ขณะพยายามอนุมัติใหม่
     if (action === "accept" && !canAcceptMore && app.status !== "accepted") {
-      await Swal.fire("ที่นั่งเต็ม", "ไม่สามารถอนุมัติเพิ่มได้เพราะครบจำนวนแล้ว", "warning");
+      await Swal.fire("ที่นั่งเต็ม", "ไม่สามารถอนุมัติเพิ่มได้", "warning");
       return;
     }
-    // guard: ทำ “ได้รับชั่วโมงแล้ว” ได้เฉพาะรายการที่อนุมัติแล้ว
     if (action === "complete" && app.status !== "accepted") {
-      await Swal.fire("ยังไม่อนุมัติ", `สามารถบันทึกเป็น “${COMPLETED_STATUS_TEXT}” ได้หลังจากอนุมัติแล้วเท่านั้น`, "info");
+      await Swal.fire("ยังไม่อนุมัติ", `ต้องอนุมัติก่อนจึงจะบันทึก "${COMPLETED_STATUS_TEXT}" ได้`, "info");
       return;
     }
 
-    const verb =
-      action === "accept"   ? "อนุมัติ"
-    : action === "reject"   ? "ปฏิเสธ"
-    : action === "complete" ? `บันทึก ‘${COMPLETED_STATUS_TEXT}’`
-                            : "ดำเนินการ";
-
+    const verb = action === "accept" ? "อนุมัติ" : action === "reject" ? "ปฏิเสธ" : "บันทึกเสร็จสิ้น";
     const result = await Swal.fire({
       title: `ยืนยัน${verb}?`,
       text: `${app.full_name} (${app.username})`,
       icon: "question",
       showCancelButton: true,
-      confirmButtonText: `ยืนยัน`,
+      confirmButtonText: "ยืนยัน",
       cancelButtonText: "ยกเลิก",
-      confirmButtonColor:
-        action === "accept" ? "#198754"
-        : action === "reject" ? "#dc3545"
-        : "#0d6efd",
+      confirmButtonColor: action === "accept" ? "#198754" : action === "reject" ? "#dc3545" : "#0d6efd",
     });
     if (!result.isConfirmed) return;
 
     try {
       setActingId(app.id);
-      const annId = parseInt(id, 10);
-      const appId = parseInt(app.id, 10);
-      if (isNaN(annId) || isNaN(appId)) {
-        await Swal.fire("ข้อมูลไม่ถูกต้อง", "รหัสประกาศหรือรหัสผู้สมัครไม่ถูกต้อง", "error");
-        return;
-      }
-
-      await changeApplicationStatus(appId, action); 
-      setLiveMsg(`${verb}เรียบร้อย: ${app.full_name}`);
-      await refreshAll(); // refresh ทั้งหัว/ตาราง (อัปเดต remaining/progress)
-      await Swal.fire("สำเร็จ", `${verb}ผู้สมัครเรียบร้อย`, "success");
+      await changeApplicationStatus(parseInt(app.id, 10), action);
+      await refreshAll();
+      await Swal.fire({ title: "สำเร็จ!", icon: "success", timer: 1500, showConfirmButton: false });
     } catch (e) {
-      setLiveMsg(`ผิดพลาด: ${e?.message || "ดำเนินการไม่สำเร็จ"}`);
       await Swal.fire("เกิดข้อผิดพลาด", e?.message || "ดำเนินการไม่สำเร็จ", "error");
     } finally {
       setActingId(null);
@@ -168,210 +131,163 @@ export default function ApplicantsManagePage() {
   };
 
   return (
-    <div className="min-vh-100 position-relative overflow-hidden bg-animated">
-      {/* Decorative background blobs */}
-      <div className="bg-blob bg-blob-1" aria-hidden="true" />
-      <div className="bg-blob bg-blob-2" aria-hidden="true" />
-      <div className="bg-blob bg-blob-3" aria-hidden="true" />
+    <div className="min-vh-100 position-relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
+      {/* Decorative */}
+      <div className="position-absolute" style={{ top: -100, right: -100, width: 400, height: 400, background: 'rgba(255,255,255,0.1)', borderRadius: '50%' }} />
+      <div className="position-absolute" style={{ bottom: -150, left: -100, width: 500, height: 500, background: 'rgba(255,255,255,0.05)', borderRadius: '50%' }} />
 
-      {/* Top Bar – ให้เหมือนทุกหน้า */}
-      <div className="hero-bar topbar glassy" style={{ height: 72 }}>
-        <div className="container-xxl d-flex align-items-center h-100">
+      {/* Top Bar */}
+      <div className="py-3 px-4" style={{ background: 'rgba(0,0,0,0.1)' }}>
+        <div className="container-xxl d-flex align-items-center">
           <div className="d-flex align-items-center">
-            <img src="/src/assets/csit.jpg" alt="Logo" className="rounded-3 shadow-sm" style={{ height: 40, width: 40, objectFit: "cover" }} />
-            <div className="ms-3 text-white fw-semibold">CSIT Competency System</div>
+            <img src="/csit.jpg" alt="Logo" className="rounded-3 shadow" style={{ height: 45, width: 45, objectFit: "cover" }} onError={(e) => (e.currentTarget.src = "/src/assets/csit.jpg")} />
+            <div className="ms-3">
+              <div className="text-white fw-bold">CSIT Competency System</div>
+              <small className="text-white-50">จัดการผู้สมัคร</small>
+            </div>
           </div>
-          <div className="ms-auto d-flex align-items-center">
-            <button className="btn btn-light btn-sm rounded-pill ripple" onClick={() => navigate(-1)}>
-              ← ย้อนกลับ
-            </button>
+          <div className="ms-auto d-flex gap-2">
+            <button className="btn btn-outline-light btn-sm rounded-pill" onClick={() => navigate('/teacher-announcements')}>📢 ประกาศของฉัน</button>
+            <button className="btn btn-light btn-sm rounded-pill" onClick={() => navigate(-1)}>← ย้อนกลับ</button>
           </div>
         </div>
       </div>
 
-      <div className="container-xxl py-4">
-        {/* Header card */}
-        <div className="card border-0 shadow-sm rounded-4 mb-3">
-          <div className="card-body d-flex flex-wrap gap-3 align-items-center">
-            <div className="me-auto">
-              <div className="small text-muted mb-1">ประกาศ</div>
-              <div className="fw-semibold fs-5">{ann?.title || "—"}</div>
-              <div className="text-muted small">
-                อาจารย์ผู้รับผิดชอบ: {ann?.teacher_name || ann?.teacher || "-"}
+      <div className="container-xxl py-4 position-relative" style={{ zIndex: 1 }}>
+        {/* Header Card */}
+        <div className="card border-0 rounded-4 shadow mb-4 overflow-hidden" style={{ background: 'rgba(255,255,255,0.95)' }}>
+          <div className="p-4 text-white" style={{ background: 'linear-gradient(135deg, #6f42c1 0%, #b388ff 100%)' }}>
+            <div className="d-flex align-items-center justify-content-between">
+              <div>
+                <small className="opacity-75">ประกาศ</small>
+                <h4 className="fw-bold mb-0">{ann?.title || "—"}</h4>
+                <div className="opacity-75">👨‍🏫 {ann?.teacher_name || ann?.teacher || "-"}</div>
               </div>
-            </div>
-
-            {/* capacity / progress */}
-            <div style={{ minWidth: 300 }}>
-              <div className="small text-muted">สถานะที่นั่ง</div>
-              {capacity == null ? (
-                <div className="badge text-bg-light fs-6">รับ: ไม่จำกัด</div>
-              ) : (
-                <>
-                  <div
-                    className="progress"
-                    role="progressbar"
-                    aria-valuenow={progressPct || 0}
-                    aria-valuemin="0"
-                    aria-valuemax="100"
-                    style={{ height: 10 }}
-                    aria-label="ความคืบหน้าการใช้ที่นั่ง"
-                  >
-                    <div className={`progress-bar ${progressColor}`} style={{ width: `${progressPct}%` }} />
-                  </div>
-                  <div className="mt-1 small text-muted">
-                    ใช้แล้ว {occupiedCount} / {capacity} · เหลือ {remaining}
-                  </div>
-                </>
+              {capacity != null && (
+                <div className="text-center">
+                  <div className="display-4 fw-bold">{stats.occupied}/{capacity}</div>
+                  <small>ที่นั่งที่ใช้</small>
+                </div>
               )}
             </div>
           </div>
+
+          {/* Progress */}
+          {capacity != null && (
+            <div className="px-4 py-3">
+              <div className="d-flex justify-content-between small text-muted mb-1">
+                <span>ความคืบหน้า</span>
+                <span>เหลือ {remaining} ที่นั่ง</span>
+              </div>
+              <div className="progress rounded-pill" style={{ height: 12 }}>
+                <div className={`progress-bar ${progressPct < 70 ? 'bg-success' : progressPct < 90 ? 'bg-warning' : 'bg-danger'}`} style={{ width: `${progressPct}%`, transition: 'width 0.5s' }} />
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Toolbar */}
-        <div className="card border-0 shadow-sm rounded-4 mb-3">
-          <div className="card-body d-flex flex-wrap gap-2 align-items-center">
-            <h5 className="m-0 me-auto">จัดการผู้สมัคร</h5>
-
-            {/* status chips */}
-            <div className="d-flex flex-wrap gap-2">
-              <Chip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>
-                ทั้งหมด ({rows.length})
-              </Chip>
-              <Chip active={statusFilter === "pending"} onClick={() => setStatusFilter("pending")}>
-                รอตรวจ ({pendingCount})
-              </Chip>
-              <Chip active={statusFilter === "accepted"} onClick={() => setStatusFilter("accepted")}>
-                อนุมัติแล้ว ({acceptedCount})
-              </Chip>
-              <Chip active={statusFilter === "completed"} onClick={() => setStatusFilter("completed")}>
-                {COMPLETED_STATUS_TEXT} ({completedCount})
-              </Chip>
-              <Chip active={statusFilter === "rejected"} onClick={() => setStatusFilter("rejected")}>
-                ปฏิเสธแล้ว ({rejectedCount})
-              </Chip>
+        {/* Stats Cards */}
+        <div className="row g-3 mb-4">
+          {[
+            { key: 'all', label: 'ทั้งหมด', count: stats.total, icon: '📋', color: '#6c757d' },
+            { key: 'pending', label: 'รอตรวจ', count: stats.pending, icon: '⏳', color: '#ffc107' },
+            { key: 'accepted', label: 'อนุมัติ', count: stats.accepted, icon: '✅', color: '#198754' },
+            { key: 'completed', label: COMPLETED_STATUS_TEXT, count: stats.completed, icon: '🏆', color: '#0dcaf0' },
+            { key: 'rejected', label: 'ปฏิเสธ', count: stats.rejected, icon: '❌', color: '#dc3545' },
+          ].map(s => (
+            <div key={s.key} className="col">
+              <button
+                className={`card border-0 rounded-4 w-100 h-100 shadow-sm ${statusFilter === s.key ? 'ring-primary' : ''}`}
+                style={{ background: statusFilter === s.key ? 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)' : 'white', border: statusFilter === s.key ? '2px solid #6f42c1' : 'none', cursor: 'pointer' }}
+                onClick={() => setStatusFilter(s.key)}
+              >
+                <div className="card-body text-center py-3">
+                  <div style={{ fontSize: '1.5rem' }}>{s.icon}</div>
+                  <div className="fs-3 fw-bold" style={{ color: s.color }}>{s.count}</div>
+                  <div className="small text-muted">{s.label}</div>
+                </div>
+              </button>
             </div>
+          ))}
+        </div>
 
-            <div className="position-relative ms-auto" style={{ minWidth: 260 }}>
-              <i className="bi bi-search position-absolute" style={{ left: 12, top: 10, opacity: 0.5 }} />
+        {/* Search */}
+        <div className="card border-0 rounded-4 shadow mb-4" style={{ background: 'rgba(255,255,255,0.95)' }}>
+          <div className="card-body py-3">
+            <div className="input-group">
+              <span className="input-group-text bg-transparent border-end-0">🔍</span>
               <input
                 type="text"
-                className="form-control ps-5 rounded-pill"
-                placeholder="ค้นหา รหัสนิสิต / ชื่อ / สถานะ"
+                className="form-control border-start-0"
+                placeholder="ค้นหา รหัสนิสิต / ชื่อ / สถานะ..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                aria-label="กล่องค้นหาผู้สมัคร"
               />
             </div>
           </div>
         </div>
 
-        {/* live region for SR */}
-        <div className="visually-hidden" aria-live="polite">{liveMsg}</div>
-
-        {/* Content */}
+        {/* Table */}
         {loading ? (
-          <div className="card border-0 shadow-sm rounded-4">
-            <div className="card-body">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="placeholder-wave mb-3">
-                  <span className="placeholder col-3 me-2"></span>
-                  <span className="placeholder col-4 me-2"></span>
-                  <span className="placeholder col-2"></span>
-                </div>
-              ))}
-              <div className="text-muted small">
-                <span className="spinner-border spinner-border-sm me-2" />
-                กำลังโหลดผู้สมัคร…
-              </div>
-            </div>
+          <div className="text-center text-white py-5">
+            <div className="spinner-border mb-3" style={{ width: '3rem', height: '3rem' }} />
+            <div className="fs-5">กำลังโหลดข้อมูล...</div>
           </div>
         ) : err ? (
           <div className="alert alert-danger rounded-4">{err}</div>
         ) : filtered.length === 0 ? (
-          <div className="card border-0 shadow-sm rounded-4">
-            <div className="card-body text-center text-muted py-5">
-              <div className="mb-2" style={{ fontSize: 24 }}>🤔</div>
-              ยังไม่มีผู้สมัครหรือไม่ตรงกับการค้นหา
-            </div>
+          <div className="card border-0 rounded-4 shadow text-center py-5" style={{ background: 'rgba(255,255,255,0.95)' }}>
+            <div style={{ fontSize: '4rem' }}>🤔</div>
+            <h5 className="text-muted mt-3">ไม่พบผู้สมัคร</h5>
+            <p className="text-muted">{rows.length === 0 ? 'ยังไม่มีผู้สมัครในประกาศนี้' : 'ลองเปลี่ยนตัวกรองหรือคำค้นหา'}</p>
           </div>
         ) : (
-          <div className="card border-0 shadow-sm rounded-4">
+          <div className="card border-0 rounded-4 shadow overflow-hidden" style={{ background: 'rgba(255,255,255,0.95)' }}>
             <div className="table-responsive">
-              <table className="table align-middle mb-0 table-hover">
-                <thead className="table-light">
+              <table className="table align-middle mb-0">
+                <thead style={{ background: 'linear-gradient(90deg, #f8f9fa, #e9ecef)' }}>
                   <tr>
-                    <th style={{ width: 160 }}>รหัสนิสิต</th>
-                    <th>ชื่อ</th>
-                    <th style={{ width: 160 }}>สถานะ</th>
-                    <th className="text-end" style={{ width: 360 }}>จัดการ</th>
+                    <th className="ps-4">รหัสนิสิต</th>
+                    <th>ชื่อ-นามสกุล</th>
+                    <th className="text-center">สถานะ</th>
+                    <th className="text-end pe-4">จัดการ</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((r) => {
-                    const disableAccept =
-                      r.status === "accepted" || r.status === "completed" || actingId === r.id || (!canAcceptMore && r.status !== "accepted");
-                    const disableComplete = r.status !== "accepted" || actingId === r.id;
-                    const disableReject = r.status === "rejected" || actingId === r.id;
-
-                    const acceptTitle = !canAcceptMore && r.status !== "accepted" ? "ที่นั่งเต็ม" : "อนุมัติ";
+                  {filtered.map((r, idx) => {
+                    const isActing = actingId === r.id;
+                    const disableAccept = r.status === "accepted" || r.status === "completed" || isActing || (!canAcceptMore && r.status !== "accepted");
+                    const disableComplete = r.status !== "accepted" || isActing;
+                    const disableReject = r.status === "rejected" || isActing;
 
                     return (
-                      <tr
-                        key={r.id}
-                        className={
-                          r.status === "accepted"  ? "table-success-subtle" :
-                          r.status === "rejected"  ? "table-danger-subtle"  :
-                          r.status === "completed" ? "table-info-subtle"    : ""
-                        }
-                      >
-                        <td className="fw-medium">{r.username}</td>
+                      <tr key={r.id} style={{ background: idx % 2 === 0 ? 'white' : '#fafafa' }}>
+                        <td className="ps-4 fw-medium">{r.username}</td>
                         <td>{r.full_name}</td>
-                        <td><StatusBadge status={r.status} /></td>
-                        <td className="text-end">
+                        <td className="text-center"><StatusBadge status={r.status} /></td>
+                        <td className="text-end pe-4">
                           <div className="btn-group">
                             <button
-                              className="btn btn-outline-success btn-sm"
+                              className="btn btn-success btn-sm rounded-pill me-1"
                               disabled={disableAccept}
                               onClick={() => doAction(r, "accept")}
-                              title={acceptTitle}
-                              aria-label={`อนุมัติ ${r.full_name}`}
+                              title={!canAcceptMore && r.status !== "accepted" ? "ที่นั่งเต็ม" : "อนุมัติ"}
                             >
-                              {actingId === r.id ? (
-                                <>
-                                  <span className="spinner-border spinner-border-sm me-2" />
-                                  กำลังอนุมัติ…
-                                </>
-                              ) : ("อนุมัติ")}
+                              {isActing ? <span className="spinner-border spinner-border-sm" /> : "✅ อนุมัติ"}
                             </button>
-
                             <button
-                              className="btn btn-outline-primary btn-sm"
+                              className="btn btn-info btn-sm rounded-pill me-1"
                               disabled={disableComplete}
                               onClick={() => doAction(r, "complete")}
-                              title={`บันทึกเป็น ‘${COMPLETED_STATUS_TEXT}’`}
-                              aria-label={`บันทึกเป็น ‘${COMPLETED_STATUS_TEXT}’ สำหรับ ${r.full_name}`}
                             >
-                              {actingId === r.id ? (
-                                <>
-                                  <span className="spinner-border spinner-border-sm me-2" />
-                                  กำลังบันทึก…
-                                </>
-                              ) : ("เสร็จสิ้นงาน")}
+                              {isActing ? <span className="spinner-border spinner-border-sm" /> : "🏆 เสร็จสิ้น"}
                             </button>
-
                             <button
-                              className="btn btn-outline-danger btn-sm"
+                              className="btn btn-outline-danger btn-sm rounded-pill"
                               disabled={disableReject}
                               onClick={() => doAction(r, "reject")}
-                              aria-label={`ปฏิเสธ ${r.full_name}`}
                             >
-                              {actingId === r.id ? (
-                                <>
-                                  <span className="spinner-border spinner-border-sm me-2" />
-                                  กำลังปฏิเสธ…
-                                </>
-                              ) : ("ปฏิเสธ")}
+                              {isActing ? <span className="spinner-border spinner-border-sm" /> : "❌"}
                             </button>
                           </div>
                         </td>
@@ -381,67 +297,12 @@ export default function ApplicantsManagePage() {
                 </tbody>
               </table>
             </div>
-
-            {/* Footer summary */}
-            <div className="card-footer bg-white rounded-4">
-              <div className="small text-muted">
-                ทั้งหมด {rows.length.toLocaleString("th-TH")} รายการ · แสดง{" "}
-                {filtered.length.toLocaleString("th-TH")} รายการที่ค้นหาได้
-              </div>
+            <div className="card-footer bg-white">
+              <small className="text-muted">แสดง {filtered.length} จาก {rows.length} รายการ</small>
             </div>
           </div>
         )}
       </div>
-
-      {/* style */}
-      <style>{`
-        /* Animated background & blobs */
-        .bg-animated{background:radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),radial-gradient(1000px 500px at 110% 10%, #e6f0ff 10%, transparent 55%),linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%);} 
-        .glassy{backdrop-filter:blur(8px);} 
-        .topbar{position:sticky;top:0;left:0;width:100%;background:linear-gradient(90deg, rgba(111,66,193,.9), rgba(142,92,255,.9));box-shadow:0 4px 16px rgba(111,66,193,.22);z-index:1040;border-bottom:1px solid rgba(255,255,255,.12);} 
-
-        /* Floating motion */
-        .card-float{animation:floatY 6s ease-in-out infinite;} 
-        @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
-
-        .glass-card { backdrop-filter: blur(6px); transition: transform .15s ease, box-shadow .15s ease; }
-        .glass-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(28,39,49,.12)!important; }
-        .ratio-21x9 { aspect-ratio: 21/9; width: 100%; background: #e9ecef; }
-        .year-pill { font-weight: 700; }
-        .form-control:focus { box-shadow: 0 0 0 .2rem rgba(111,66,193,.12); border-color: #8e5cff; }
-        .wave{position:fixed;left:0;right:0;bottom:-1px;width:100%;height:120px;}
-
-        /* Ripple */
-        .ripple{position:relative;overflow:hidden;} 
-        .ripple:after{content:"";position:absolute;inset:0;border-radius:inherit;opacity:0;background:radial-gradient(circle at var(--x,50%) var(--y,50%), rgba(255,255,255,.45), transparent 40%);transform:scale(.2);transition:transform .3s, opacity .45s;pointer-events:none;} 
-        .ripple:active:after{opacity:1;transform:scale(1);transition:0s;} 
-        .ripple{--x:50%;--y:50%;} 
-        .ripple:focus-visible{outline:3px solid rgba(142,92,255,.45);outlin e-offset:2px;}
-
-        /* Blobs */
-        .bg-blob{position:absolute;filter:blur(60px);opacity:.55;z-index:0;} 
-        .bg-blob-1{width:420px;height:420px;left:-120px;top:-80px;background:#d7c6ff;animation:drift1 18s ease-in-out infinite;} 
-        .bg-blob-2{width:360px;height:360px;right:-120px;top:120px;background:#c6ddff;animation:drift2 22s ease-in-out infinite;} 
-        .bg-blob-3{width:300px;height:300px;left:15%;bottom:-120px;background:#ffd9ec;animation:drift3 20s ease-in-out infinite;} 
-        @keyframes drift1{0%,100%{transform:translate(0,0)}50%{transform:translate(20px,10px)}} 
-        @keyframes drift2{0%,100%{transform:translate(0,0)}50%{transform:translate(-16px,8px)}} 
-        @keyframes drift3{0%,100%{transform:translate(0,0)}50%{transform:translate(12px,-12px)}} 
-      `}</style>
-
-      {/* ripple positioning script */}
-      <script
-        dangerouslySetInnerHTML={{
-          __html: `
-        document.addEventListener('pointerdown', (e) => {
-          const el = e.target.closest('.ripple');
-          if (!el) return;
-          const rect = el.getBoundingClientRect();
-          el.style.setProperty('--x', ((e.clientX - rect.left) / rect.width * 100).toFixed(2) + '%');
-          el.style.setProperty('--y', ((e.clientY - rect.top) / rect.height * 100).toFixed(2) + '%');
-        }, { passive: true });
-      `,
-        }}
-      />
     </div>
   );
 }

@@ -19,8 +19,10 @@ import {
   scoreTech,
   calcAllCompetencies,
   scoreAcademic,
+  scoreSocialActivities,
+  scoreCollaboration,
+  normalizePeerScore,
   toArray,
-  // ❌ ไม่ใช้ scoreCollaboration (เราคำนวณเองให้สเกลตรงกัน)
 } from "../../utils/scoring";
 
 const API_BASE = (import.meta.env?.VITE_API_BASE || "http://localhost:3000").replace(/\/+$/, "");
@@ -78,14 +80,7 @@ const pickGradeByCode = (gmap, rawCode) => {
   return hit ? gmap[hit] : null;
 };
 
-/* ============== Helper (peer/self normalizer) ============== */
-/** แปลงคะแนน 1..5 → 0..100 (1=0%, 5=100%) หรือถ้าได้ 0..100 อยู่แล้วจะ clamp ให้ 0..100 */
-const normalizePeerScore = (v) => {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(Math.max(0, Math.min(100, n))); 
-};
-
+/* ============== Helper (peer/self) ============== */
 /** เฉลี่ยจาก object แยกหัวข้อ (communication/teamwork/...) สเกล 1..5 */
 const avgFromTopicObject = (obj) => {
   if (!obj || typeof obj !== "object") return null;
@@ -93,13 +88,6 @@ const avgFromTopicObject = (obj) => {
   const vals = keys.map(k => Number(obj[k])).filter(v => Number.isFinite(v) && v >= 0);
   if (!vals.length) return null;
   return vals.reduce((s, v) => s + v, 0) / vals.length; // 1..5
-};
-
-/** คำนวณคะแนนทำงานร่วมกับผู้อื่น (สเกล 0..100): Peer 80% + Self 20% */
-const computeCollabScore = (peerAvg, selfAvg) => {
-  const p = Math.max(0, Math.min(100, Number(peerAvg) || 0));
-  const s = Math.max(0, Math.min(100, Number(selfAvg) || 0));
-  return Math.round(0.8 * p + 0.2 * s);
 };
 
 /* ===== Helper: แปลงผลจาก /peer/received → peerAvg(0..100), peerCount ===== */
@@ -122,9 +110,9 @@ function extractPeerSummary(rec) {
 
   // 2) ถ้าได้แบบแยกหัวข้อ (communication/teamwork/...) → หา mean แล้วค่อย normalize
   if (rec?.summary?.avg && typeof rec.summary.avg === "object") {
-    const mean = avgFromTopicObject(rec.summary.avg); // ← ยอมรับ 0 ด้วย
+    const mean = avgFromTopicObject(rec.summary.avg); // ค่า 1..5
     if (mean != null) {
-      return { peerAvg: normalizePeerScore(mean), peerCount };
+      return { peerAvg: normalizePeerScore(mean, true), peerCount }; // true = สเกล 1-5
     }
   }
 
@@ -254,39 +242,33 @@ export default function StudentInfoPage() {
               const avgGpa25 = n ? +(sumGpa25 / n).toFixed(2) : 0;
               const avgCore15 = n ? +(sumCore15 / n).toFixed(2) : 0;
 
+              // 1. Academic (0-100%)
               const acadObj = scoreAcademic({
                 manualGpa: prof?.account?.manual_gpa,
                 scoreGpa25: avgGpa25,
                 scoreCore15: avgCore15,
               });
-              const acadScore = acadObj.score;
+              const pAcad = acadObj.percent;
 
-              // ===== ภาษา/เทคโนโลยี =====
+              // 2. Language (0-100%)
               const langs = await getLatestLanguagesAll(id).catch(() => ({}));
-              const trainingsResp = await listTrainings(id).catch(() => ({ items: [] }));
-              const socialResp = await listActivities(id, "social").catch(() => ({ items: [] }));
-
               const cept = langs?.CEPT ?? null;
-              const langScore = scoreLang(cept?.level)?.score ?? 0;
+              const langObj = scoreLang(cept?.level);
+              const pLang = langObj.percent;
+
+              // 3. Technology (0-100%)
+              const trainingsResp = await listTrainings(id).catch(() => ({ items: [] }));
               const ictPct = Number(langs?.ICT?.score_raw ?? 0);
               const itpePct = Number(langs?.ITPE?.score_raw ?? 0);
-
               const trainingsArr = toArray(trainingsResp?.items || trainingsResp);
-              const techScore = scoreTech(trainingsArr.length, ictPct, itpePct, cept)?.score ?? 0;
+              const techObj = scoreTech(trainingsArr.length, ictPct, itpePct, cept);
+              const pTech = techObj.percent;
 
+              // 4. Social Activities (0-100%) - ใช้ฟังก์ชันใหม่ที่แยกตามประเภทกิจกรรม
+              const socialResp = await listActivities(id, "social").catch(() => ({ items: [] }));
               const socialActs = toArray(socialResp?.items || socialResp);
-
-              const tmp = calcAllCompetencies({
-                acadScore,
-                langScore,
-                techScore,
-                socialActs,
-                commActs: [], // ไม่ใช้ communication
-              });
-              const pAcad = tmp.each?.acad ?? 0;
-              const pLang = tmp.each?.lang ?? 0;
-              const pTech = tmp.each?.tech ?? 0;
-              const pSoc = tmp.each?.social ?? 0;
+              const socialResult = scoreSocialActivities(socialActs);
+              const pSoc = socialResult.totalPercent;
 
               // ===== Collaboration (peer + self) =====
               let peerAvg = 0, selfAvg = 0, peerCount = 0;
@@ -312,24 +294,27 @@ export default function StudentInfoPage() {
                 // backend บางที่อาจไม่มี self() → fallback เป็น given()
                 let self = await (peer.self ? peer.self(id, periodKey) : peer.given(id, periodKey));
                 let s = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+                let isScale15 = false;
                 if (!Number.isFinite(s) && self?.summary?.avg) {
                   const m15 = avgFromTopicObject(self.summary.avg);
-                  if (m15 != null) s = m15; // 1..5
+                  if (m15 != null) { s = m15; isScale15 = true; } // 1..5
                 }
-                selfAvg = normalizePeerScore(s);
+                selfAvg = normalizePeerScore(s, isScale15 ? true : null);
                 // Fallback: ถ้ายัง 0 ลองไม่ระบุ period
                 if (selfAvg === 0) {
                   self = await (peer.self ? peer.self(id, null) : peer.given(id, null));
                   let s2 = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+                  let isScale152 = false;
                   if (!Number.isFinite(s2) && self?.summary?.avg) {
                     const m152 = avgFromTopicObject(self.summary.avg);
-                    if (m152 != null) s2 = m152;
+                    if (m152 != null) { s2 = m152; isScale152 = true; }
                   }
-                  selfAvg = normalizePeerScore(s2);
+                  selfAvg = normalizePeerScore(s2, isScale152 ? true : null);
                 }
               } catch { }
 
-              const collabScore = computeCollabScore(peerAvg, selfAvg); // ✅ 0..100
+              const collabResult = scoreCollaboration({ self: selfAvg, peerAvg }); // ✅ 0..100
+              const collabScore = collabResult.score;
 
               // รวม 5 ด้านแบบถ่วงเท่ากัน
               const each = { acad: pAcad, lang: pLang, tech: pTech, social: pSoc, collab: collabScore };
@@ -407,27 +392,47 @@ export default function StudentInfoPage() {
     return arr;
   }, [filtered, enrich]);
 
-  /* ===== สรุปคะแนนตามตัวกรอง + แยกตามสาขา/ชั้นปี ===== */
+  /* ===== สรุปคะแนนตามตัวกรอง + แยกตามสาขา/ชั้นปี (แสดงทุกสาขา/ชั้นปี) ===== */
   const stats = useMemo(() => {
     let count = 0, sum = 0, min = Infinity, max = -Infinity;
     const groups = {};
+
+    // สร้าง placeholder สำหรับทุกสาขา/ชั้นปี
+    const allDepts = ["วิทยาการคอมพิวเตอร์", "เทคโนโลยีสารสนเทศ"];
+    const allYears = [1, 2, 3, 4];
+    allDepts.forEach((dep) => {
+      allYears.forEach((year) => {
+        const key = `${dep}::${year}`;
+        groups[key] = { dep, year, count: 0, sum: 0, hasData: false };
+      });
+    });
+
+    // รวมคะแนนตามกลุ่ม
     sorted.forEach((acc) => {
       const score = Number(enrich[acc.id]?.total_competency);
       if (!Number.isFinite(score)) return;
       count++; sum += score;
       if (score < min) min = score;
       if (score > max) max = score;
-      const dep = majorNameById[acc.major_id] || "—";
+
+      const dep = majorNameById[acc.major_id] || "";
       const year = enrich[acc.id]?.year_level ?? acc.year_level ?? 0;
+      if (!allDepts.includes(dep) || !allYears.includes(year)) return;
+
       const key = `${dep}::${year}`;
-      if (!groups[key]) groups[key] = { dep, year, count: 0, sum: 0 };
       groups[key].count += 1;
       groups[key].sum += score;
+      groups[key].hasData = true;
     });
+
     const avg = count ? +(sum / count).toFixed(2) : 0;
     const groupRows = Object.values(groups)
-      .map((g) => ({ ...g, avg: +(g.sum / g.count).toFixed(2) }))
+      .map((g) => ({
+        ...g,
+        avg: g.count ? +(g.sum / g.count).toFixed(2) : null,
+      }))
       .sort((a, b) => a.dep.localeCompare(b.dep, "th") || a.year - b.year);
+
     return { count, sum: Math.round(sum), min: count ? min : 0, max: count ? max : 0, avg, groups: groupRows };
   }, [sorted, enrich, majorNameById]);
 
@@ -448,30 +453,34 @@ export default function StudentInfoPage() {
   const modalRef = useRef(null);
 
   const buildCalc = ({ profile, languages, trainings, activities, avgGpa25, avgCore15, collab }) => {
+    // 1. Academic (0-100%)
     const acadObj = scoreAcademic({
       manualGpa: profile?.account?.manual_gpa,
       scoreGpa25: avgGpa25 ?? 0,
       scoreCore15: avgCore15 ?? 0,
     });
-    const acadScore = acadObj.score;
+    const pAcad = acadObj.percent;
+
+    // 2. Language (0-100%)
     const cept = languages?.CEPT ?? null;
-    const langScore = scoreLang(cept?.level)?.score ?? 0;
+    const langObj = scoreLang(cept?.level);
+    const pLang = langObj.percent;
+
+    // 3. Technology (0-100%)
     const ictPct = Number(languages?.ICT?.score_raw ?? 0);
     const itpePct = Number(languages?.ITPE?.score_raw ?? 0);
     const trainingsArr = toArray(trainings?.items || trainings);
-    const techScore = scoreTech(trainingsArr.length, ictPct, itpePct, cept)?.score ?? 0;
+    const techObj = scoreTech(trainingsArr.length, ictPct, itpePct, cept);
+    const pTech = techObj.percent;
+
+    // 4. Social Activities (0-100%)
     const socialActs = toArray(activities?.social);
+    const socialResult = scoreSocialActivities(socialActs);
+    const pSoc = socialResult.totalPercent;
 
-    const tmp = calcAllCompetencies({
-      acadScore, langScore, techScore, socialActs, commActs: [],
-    });
-    const pAcad = tmp.each?.acad ?? 0;
-    const pLang = tmp.each?.lang ?? 0;
-    const pTech = tmp.each?.tech ?? 0;
-    const pSoc = tmp.each?.social ?? 0;
-
-    // ✅ ทำงานร่วมกับผู้อื่น 0..100
-    const collabScore = computeCollabScore(collab?.peerAvg || 0, collab?.selfAvg || 0);
+    // 5. Collaboration (Peer 80% + Self 20%)
+    const collabResult = scoreCollaboration({ self: collab?.selfAvg || 0, peerAvg: collab?.peerAvg || 0 });
+    const collabScore = collabResult.score;
 
     const each = { acad: pAcad, lang: pLang, tech: pTech, social: pSoc, collab: collabScore };
     const total = Math.round((each.acad + each.lang + each.tech + each.social + each.collab) / 5);
@@ -489,7 +498,7 @@ export default function StudentInfoPage() {
         values: [each.acad, each.lang, each.tech, each.social, each.collab],
         maxValues: [100, 100, 100, 100, 100],
       },
-      calc: { total, explain, acadObj, each },
+      calc: { total, explain, acadObj, each, socialBreakdown: socialResult.breakdown },
     };
   };
 
@@ -570,19 +579,21 @@ export default function StudentInfoPage() {
       try {
         let self = await (peer.self ? peer.self(acc.id, periodKey) : peer.given(acc.id, periodKey));
         let s = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+        let isScale15 = false;
         if (!Number.isFinite(s) && self?.summary?.avg) {
           const m15 = avgFromTopicObject(self.summary.avg);
-          if (m15 != null) s = m15;
+          if (m15 != null) { s = m15; isScale15 = true; }
         }
-        selfAvg = normalizePeerScore(s);
+        selfAvg = normalizePeerScore(s, isScale15 ? true : null);
         if (selfAvg === 0) {
           self = await (peer.self ? peer.self(acc.id, null) : peer.given(acc.id, null));
           let s2 = Number(self?.avg ?? self?.summary?.self_avg ?? 0) || 0;
+          let isScale152 = false;
           if (!Number.isFinite(s2) && self?.summary?.avg) {
             const m152 = avgFromTopicObject(self.summary.avg);
-            if (m152 != null) s2 = m152;
+            if (m152 != null) { s2 = m152; isScale152 = true; }
           }
-          selfAvg = normalizePeerScore(s2);
+          selfAvg = normalizePeerScore(s2, isScale152 ? true : null);
         }
       } catch { }
       const collabSummary = { peerAvg, selfAvg, peerCount, periodKey };
@@ -609,7 +620,7 @@ export default function StudentInfoPage() {
   if (!user || user.role !== "teacher") return null;
 
   return (
-    <div className="relative ">
+    <div className="min-vh-100 position-relative bg-animated">
       {/* Blobs */}
       <div className="bg-blob bg-blob-1" aria-hidden="true" />
       <div className="bg-blob bg-blob-2" aria-hidden="true" />
@@ -719,54 +730,94 @@ export default function StudentInfoPage() {
 
             {/* ===== Summary after filters ===== */}
             {!loading && !error && (
-              <div className="card border-0 shadow-sm rounded-4 mb-3 glassy">
+              <div className="card border-0 shadow-sm rounded-4 mb-3 glassy summary-card">
                 <div className="card-body">
-                  <div className="d-flex flex-wrap gap-3 align-items-center">
-                    <h6 className="mb-0 me-auto">สรุปคะแนน (หลังตัวกรอง)</h6>
-                    <div className="small text-muted">
-                      จำนวนนิสิต: <b>{stats.count.toLocaleString("th-TH")}</b>
+                  {/* Header สรุปภาพรวม */}
+                  <div className="d-flex flex-wrap align-items-center gap-2 mb-3 pb-3 border-bottom">
+                    <h6 className="mb-0 me-auto d-flex align-items-center gap-2">
+                      <i className="bi bi-bar-chart-fill text-primary" />
+                      สรุปคะแนนสมรรถนะ
+                    </h6>
+                  </div>
+
+                  {/* Stats Cards */}
+                  <div className="row g-2 mb-3">
+                    <div className="col-6 col-md-4 col-lg">
+                      <div className="stat-box bg-primary-subtle">
+                        <div className="stat-label">จำนวนนิสิต</div>
+                        <div className="stat-value text-primary">{stats.count.toLocaleString("th-TH")}</div>
+                      </div>
                     </div>
-                    <div className="small text-muted">
-                      ผลรวมคะแนน: <b>{stats.sum.toLocaleString("th-TH")}</b>
+                    <div className="col-6 col-md-4 col-lg">
+                      <div className="stat-box bg-success-subtle">
+                        <div className="stat-label">คะแนนเฉลี่ย</div>
+                        <div className="stat-value text-success">{stats.avg || "—"}</div>
+                      </div>
                     </div>
-                    <div className="small text-muted">
-                      เฉลี่ย: <b>{stats.avg}</b>
+                    <div className="col-6 col-md-4 col-lg">
+                      <div className="stat-box bg-info-subtle">
+                        <div className="stat-label">ผลรวมคะแนน</div>
+                        <div className="stat-value text-info">{stats.sum.toLocaleString("th-TH")}</div>
+                      </div>
                     </div>
-                    <div className="small text-muted">
-                      ต่ำสุด: <b>{stats.min}</b>
+                    <div className="col-6 col-md-6 col-lg">
+                      <div className="stat-box bg-warning-subtle">
+                        <div className="stat-label">ต่ำสุด</div>
+                        <div className="stat-value text-warning">{stats.count ? stats.min : "—"}</div>
+                      </div>
                     </div>
-                    <div className="small text-muted">
-                      สูงสุด: <b>{stats.max}</b>
+                    <div className="col-6 col-md-6 col-lg">
+                      <div className="stat-box bg-danger-subtle">
+                        <div className="stat-label">สูงสุด</div>
+                        <div className="stat-value text-danger">{stats.count ? stats.max : "—"}</div>
+                      </div>
                     </div>
                   </div>
 
                   {/* ตารางสรุปตามสาขา/ชั้นปี */}
-                  {stats.groups.length > 0 && (
-                    <div className="table-responsive mt-3">
-                      <table className="table table-sm align-middle mb-0">
-                        <thead>
-                          <tr>
-                            <th style={{ width: '40%' }}>สาขา</th>
-                            <th style={{ width: 80 }}>ชั้นปี</th>
-                            <th style={{ width: 120 }}>จำนวน</th>
-                            <th style={{ width: 160 }}>ผลรวมคะแนน</th>
-                            <th style={{ width: 120 }}>เฉลี่ย</th>
+                  <div className="table-responsive">
+                    <table className="table table-hover align-middle mb-0 summary-table">
+                      <thead>
+                        <tr>
+                          <th>สาขา</th>
+                          <th className="text-center" style={{ width: 90 }}>ชั้นปี</th>
+                          <th className="text-end" style={{ width: 100 }}>จำนวน</th>
+                          <th className="text-end" style={{ width: 120 }}>ผลรวม</th>
+                          <th className="text-end" style={{ width: 110 }}>เฉลี่ย</th>
+                          <th className="text-center" style={{ width: 100 }}>สถานะ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stats.groups.map((g) => (
+                          <tr key={`${g.dep}-${g.year}`} className={!g.hasData ? "table-light" : ""}>
+                            <td>
+                              <span className={`dept-badge ${g.dep === "วิทยาการคอมพิวเตอร์" ? "dept-cs" : "dept-it"}`}>
+                                {g.dep === "วิทยาการคอมพิวเตอร์" ? "CS" : "IT"}
+                              </span>
+                              <span className="ms-2">{g.dep}</span>
+                            </td>
+                            <td className="text-center">
+                              <span className="badge bg-secondary rounded-pill">ปี {g.year}</span>
+                            </td>
+                            <td className="text-end fw-medium">{g.hasData ? g.count.toLocaleString("th-TH") : "—"}</td>
+                            <td className="text-end">{g.hasData ? g.sum.toLocaleString("th-TH") : "—"}</td>
+                            <td className="text-end fw-semibold">{g.hasData && g.avg != null ? g.avg : "—"}</td>
+                            <td className="text-center">
+                              {g.hasData ? (
+                                <span className="badge bg-success-subtle text-success">
+                                  <i className="bi bi-check-circle me-1" />มีข้อมูล
+                                </span>
+                              ) : (
+                                <span className="badge bg-warning-subtle text-warning">
+                                  <i className="bi bi-hourglass-split me-1" />รอข้อมูล
+                                </span>
+                              )}
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {stats.groups.map((g) => (
-                            <tr key={`${g.dep}-${g.year}`}>
-                              <td>{g.dep}</td>
-                              <td>{g.year}</td>
-                              <td>{g.count.toLocaleString("th-TH")}</td>
-                              <td>{g.sum.toLocaleString("th-TH")}</td>
-                              <td>{g.avg}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -841,13 +892,23 @@ export default function StudentInfoPage() {
       {/* ============ Modal รายละเอียดนิสิต ============ */}
       {detailOpen && (
         <div className="modal d-block" style={{ background: "rgba(0,0,0,.5)" }} role="dialog" aria-modal="true" ref={modalRef}>
-          <div className="modal-dialog modal-xl">
-            <div className="modal-content rounded-4">
-              <div className="modal-header border-0">
-                <h5 className="modal-title">
-                  รายละเอียดสมรรถนะ — {detailAccount?.full_name} ({detailAccount?.username})
-                </h5>
-                <button type="button" className="btn-close" onClick={() => setDetailOpen(false)} />
+          <div className="modal-dialog modal-xl modal-dialog-scrollable">
+            <div className="modal-content rounded-4 overflow-hidden border-0 shadow-lg">
+              <div className="modal-header border-0 text-white" style={{ background: 'linear-gradient(135deg, #6f42c1 0%, #8b5cf6 50%, #a78bfa 100%)' }}>
+                <div className="d-flex align-items-center gap-3">
+                  <img
+                    src={absUrl(detailAccount?.avatar_url)}
+                    alt=""
+                    className="rounded-circle border border-3 border-white shadow"
+                    style={{ width: 50, height: 50, objectFit: 'cover' }}
+                    onError={(e) => { e.currentTarget.src = DEFAULT_AVATAR; }}
+                  />
+                  <div>
+                    <h5 className="modal-title mb-0 fw-bold">{detailAccount?.full_name}</h5>
+                    <small className="opacity-75">{detailAccount?.username} • ชั้นปี {detailAccount?.year_level || '-'}</small>
+                  </div>
+                </div>
+                <button type="button" className="btn-close btn-close-white" onClick={() => setDetailOpen(false)} />
               </div>
 
               <div className="modal-body">
@@ -879,28 +940,31 @@ export default function StudentInfoPage() {
                     {/* Summary */}
                     <div className="row g-3 mb-3">
                       <div className="col-6 col-lg-3">
-                        <div className="card border-0 shadow-sm rounded-4 h-100">
-                          <div className="card-body">
+                        <div className="card border-0 shadow-sm rounded-4 h-100" style={{ background: 'linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%)' }}>
+                          <div className="card-body text-center">
+                            <div style={{ fontSize: '2rem' }}>📊</div>
                             <div className="text-muted small">GPA (กรอกเอง)</div>
-                            <div className="fs-5 fw-semibold">{detail?.profile?.account?.manual_gpa ?? "—"}</div>
+                            <div className="fs-3 fw-bold" style={{ color: '#db2777' }}>{detail?.profile?.account?.manual_gpa ?? "—"}</div>
                           </div>
                         </div>
                       </div>
 
                       <div className="col-6 col-lg-3">
-                        <div className="card border-0 shadow-sm rounded-4 h-100">
-                          <div className="card-body">
+                        <div className="card border-0 shadow-sm rounded-4 h-100" style={{ background: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)' }}>
+                          <div className="card-body text-center">
+                            <div style={{ fontSize: '2rem' }}>📚</div>
                             <div className="text-muted small">ชั้นปี</div>
-                            <div className="fs-5 fw-semibold">{detail?.profile?.account?.year_level ?? "—"}</div>
+                            <div className="fs-3 fw-bold text-primary">{detail?.profile?.account?.year_level ?? "—"}</div>
                           </div>
                         </div>
                       </div>
                       <div className="col-6 col-lg-3">
-                        <div className="card border-0 shadow-sm rounded-4 h-100">
-                          <div className="card-body">
-                            <div className="text-muted small">คะแนนรวม (ถ่วงเท่ากัน)</div>
-                            <div className="fs-5 fw-semibold">
-                              {detail?.calc?.total != null ? `${detail.calc.total}/100` : "—"}
+                        <div className="card border-0 shadow-sm rounded-4 h-100" style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #bbf7d0 100%)' }}>
+                          <div className="card-body text-center">
+                            <div style={{ fontSize: '2rem' }}>🏆</div>
+                            <div className="text-muted small">คะแนนรวม</div>
+                            <div className="fs-3 fw-bold text-success">
+                              {detail?.calc?.total != null ? detail.calc.total : "—"}<small className="fs-6 text-muted">/100</small>
                             </div>
                           </div>
                         </div>
@@ -908,12 +972,18 @@ export default function StudentInfoPage() {
 
                       {/* สรุปทำงานร่วมกับผู้อื่น */}
                       <div className="col-12 col-lg-3">
-                        <div className="card border-0 shadow-sm rounded-4 h-100">
+                        <div className="card border-0 shadow-sm rounded-4 h-100" style={{ background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)' }}>
                           <div className="card-body">
-                            <div className="text-muted small">ทำงานร่วมกับผู้อื่น (รอบ {detail?.collab?.periodKey || periodKey})</div>
-                            <div className="small">Peer Avg: <b>{Math.round(detail?.collab?.peerAvg ?? 0)}</b> / 100</div>
-                            <div className="small">Self Avg: <b>{Math.round(detail?.collab?.selfAvg ?? 0)}</b> / 100</div>
-                            <div className="small">จำนวนเพื่อนที่ประเมิน: <b>{detail?.collab?.peerCount ?? 0}</b></div>
+                            <div className="d-flex align-items-center gap-2 mb-2">
+                              <span style={{ fontSize: '1.5rem' }}>🤝</span>
+                              <span className="fw-semibold">ทำงานร่วมกับผู้อื่น</span>
+                            </div>
+                            <div className="small text-muted mb-1">รอบ {detail?.collab?.periodKey || periodKey}</div>
+                            <div className="d-flex justify-content-between small">
+                              <span>Peer: <b className="text-primary">{(detail?.collab?.peerAvg ?? 0).toFixed(1)}</b></span>
+                              <span>Self: <b className="text-success">{(detail?.collab?.selfAvg ?? 0).toFixed(1)}</b></span>
+                            </div>
+                            <div className="text-muted small mt-1">👥 {detail?.collab?.peerCount ?? 0} คนประเมิน</div>
                           </div>
                         </div>
                       </div>
@@ -980,20 +1050,66 @@ export default function StudentInfoPage() {
                         </div>
                       </div>
 
-                      {/* สังคม (Social) */}
+                      {/* สังคม (Social) - แบ่งหมวดหมู่ */}
                       <div className="col-12">
-                        <div className="card border-0 shadow-sm rounded-4 h-100">
+                        <div className="card border-0 shadow-sm rounded-4 h-100" style={{ background: 'linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%)' }}>
                           <div className="card-body">
-                            <div className="fw-semibold mb-2">กิจกรรมสังคม (Social)</div>
-                            {toArray(detail.activities?.social).length ? (
-                              <ul className="list-group list-group-flush">
-                                {toArray(detail.activities.social).map((a) => (
-                                  <li key={a.id ?? `${a.title}-${a.hours ?? "0"}`} className="list-group-item px-0">
-                                    {a.title} {a.hours ? `— ${a.hours} ชม.` : ""} {a.role ? `(${a.role})` : ""}
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : <div className="text-muted small">ยังไม่มีกิจกรรมสังคม</div>}
+                            <div className="d-flex align-items-center gap-2 mb-3">
+                              <span style={{ fontSize: '1.5rem' }}>🎯</span>
+                              <h6 className="fw-bold mb-0">กิจกรรมสังคม</h6>
+                              <span className="badge bg-primary rounded-pill ms-auto">
+                                {toArray(detail.activities?.social).length} กิจกรรม
+                              </span>
+                            </div>
+
+                            {(() => {
+                              const allActs = toArray(detail.activities?.social);
+                              if (!allActs.length) return <div className="text-muted small">ยังไม่มีกิจกรรมสังคม</div>;
+
+                              // แบ่งกิจกรรมตามหมวดหมู่
+                              const categorize = (a) => {
+                                const cat = String(a?.category || a?.type || '').toLowerCase();
+                                if (cat.includes('central') || cat.includes('กลาง') || cat === 'university') return 'central';
+                                if (cat.includes('faculty') || cat.includes('คณะ') || cat === 'department') return 'faculty';
+                                return 'elective';
+                              };
+
+                              const central = allActs.filter(a => categorize(a) === 'central');
+                              const faculty = allActs.filter(a => categorize(a) === 'faculty');
+                              const elective = allActs.filter(a => categorize(a) === 'elective');
+
+                              const renderCategory = (label, icon, color, items, target) => (
+                                <div className="mb-3">
+                                  <div className="d-flex align-items-center gap-2 mb-2">
+                                    <span style={{ fontSize: '1.1rem' }}>{icon}</span>
+                                    <span className="fw-semibold" style={{ color }}>{label}</span>
+                                    <span className="badge rounded-pill" style={{ background: color, color: '#fff' }}>
+                                      {items.length} / {target}
+                                    </span>
+                                    <div className="progress flex-grow-1 ms-2" style={{ height: 6 }}>
+                                      <div className="progress-bar" style={{ width: `${Math.min(100, (items.length / target) * 100)}%`, background: color }}></div>
+                                    </div>
+                                  </div>
+                                  {items.length > 0 ? (
+                                    <div className="d-flex flex-wrap gap-2">
+                                      {items.map((a, i) => (
+                                        <div key={a.id || i} className="badge bg-white text-dark border shadow-sm px-3 py-2" style={{ fontSize: '0.8rem' }}>
+                                          {a.title} {a.hours ? `(${a.hours}ชม.)` : ''} {a.role ? <span className="text-muted">• {a.role}</span> : ''}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : <div className="text-muted small fst-italic">ยังไม่มีกิจกรรมในหมวดนี้</div>}
+                                </div>
+                              );
+
+                              return (
+                                <>
+                                  {renderCategory('กิจกรรมกลาง (มหาวิทยาลัย)', '🏛️', '#6f42c1', central, 6)}
+                                  {renderCategory('กิจกรรมคณะ', '🎓', '#0d6efd', faculty, 8)}
+                                  {renderCategory('กิจกรรมเสรี', '✨', '#20c997', elective, 4)}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       </div>
@@ -1019,12 +1135,7 @@ export default function StudentInfoPage() {
                                   </thead>
                                   <tbody>
                                     {detail.requiredAll
-                                      .sort(
-                                        (a, b) =>
-                                          (a.year - b.year) ||
-                                          (a.sem - b.sem) ||
-                                          String(a.code).localeCompare(String(b.code))
-                                      )
+                                      .sort((a, b) => (a.year - b.year) || (a.sem - b.sem) || String(a.code).localeCompare(String(b.code)))
                                       .map((row) => (
                                         <tr key={`${row.year}-${row.sem}-${row.code}`}>
                                           <td>{row.year}</td>
@@ -1065,7 +1176,7 @@ export default function StudentInfoPage() {
 
       {/* local styles */}
       <style>{`
-        .bg-animated{background:radial-gradient(1200px 600px at 10% -10%, #efe7ff 15%, transparent 60%),radial-gradient(1000px 500px at 110% 10%, #e6f0ff 10%, transparent 55%),linear-gradient(180deg,#f7f7fb 0%,#eef1f7 100%);} 
+        
         .glassy{backdrop-filter:blur(8px);} 
         .topbar{position:sticky;top:0;left:0;width:100%;background:linear-gradient(90deg, rgba(111,66,193,.9), rgba(142,92,255,.9));box-shadow:0 4px 16px rgba(111,66,193,.22);z-index:1040;border-bottom:1px solid rgba(255,255,255,.12);} 
         .glass-card { backdrop-filter: blur(6px); transition: transform .15s ease, box-shadow .15s ease; }
@@ -1073,7 +1184,6 @@ export default function StudentInfoPage() {
         .ratio-21x9 { aspect-ratio: 21/9; width: 100%; background: #e9ecef; }
         .year-pill { font-weight: 700; }
         .form-control:focus { box-shadow: 0 0 0 .2rem rgba(111,66,193,.12); border-color: #8e5cff; }
-        html, body { overflow-x: hidden; }
         .bg-blob { position: absolute; filter: blur(60px); opacity: .55; z-index: 0; pointer-events: none; overflow: hidden; max-width: 100vw; will-change: transform; }
         .bg-blob-1{width:420px;height:420px;left:-120px;top:-80px;background:#d7c6ff;animation:drift1 18s ease-in-out infinite;} 
         .bg-blob-2{width:360px;height:360px;right:-120px;top:120px;background:#c6ddff;animation:drift2 22s ease-in-out infinite;} 
@@ -1086,6 +1196,18 @@ export default function StudentInfoPage() {
         .ripple:active:after{opacity:1;transform:scale(1);transition:0s;} 
         .ripple{--x:50%;--y:50%;} 
         .ripple:focus-visible{outline:3px solid rgba(142,92,255,.45);outline-offset:2px;}
+        /* Summary Card Styles */
+        .summary-card { background: linear-gradient(135deg, rgba(255,255,255,.95), rgba(248,250,252,.9)); }
+        .stat-box { padding: 12px 16px; border-radius: 12px; text-align: center; transition: transform .15s ease; }
+        .stat-box:hover { transform: translateY(-2px); }
+        .stat-label { font-size: 0.75rem; color: #6c757d; margin-bottom: 4px; font-weight: 500; }
+        .stat-value { font-size: 1.25rem; font-weight: 700; }
+        .dept-badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 700; }
+        .dept-cs { background: linear-gradient(135deg, #ff7300, #ff9a44); color: white; }
+        .dept-it { background: linear-gradient(135deg, #8a07e2, #a855f7); color: white; }
+        .summary-table thead th { background: #f8f9fa; font-weight: 600; font-size: 0.85rem; border-bottom: 2px solid #dee2e6; }
+        .summary-table tbody tr:hover { background: rgba(111,66,193,.05); }
+        .summary-table td { vertical-align: middle; padding: 10px 8px; }
       `}</style>
 
       {/* ripple position helper */}

@@ -235,25 +235,26 @@ export default function ActivitiesSection({ user }) {
 
   return (
     <div>
-      <h6 className="mb-2">กิจกรรมด้านสังคม</h6>
+      <h6 className="fw-bold mb-3">กิจกรรมด้านสังคม</h6>
 
-      <div className="table-responsive">
-        <table className="table align-middle">
-          <thead>
+      <div className="table-responsive rounded-4 shadow-sm border-0 mb-4">
+        <table className="table align-middle table-hover mb-0">
+          <thead className="table-light">
             <tr>
-              <th style={{ minWidth: 180 }}>ชื่อกิจกรรม</th>
-              <th>ประเภท</th>
-              <th>บทบาท</th>
-              <th>ชั่วโมง</th>
-              <th style={{ minWidth: 220 }}>ช่วงเวลา</th>
-              <th style={{ minWidth: 160 }}>หลักฐาน</th>
-              <th className="text-end" style={{ width: 160 }} />
+              <th style={{ minWidth: 180, borderTop: "none" }}>ชื่อกิจกรรม</th>
+              <th style={{ borderTop: "none" }}>ประเภท</th>
+              <th style={{ borderTop: "none" }}>บทบาท</th>
+              <th style={{ borderTop: "none" }}>ชั่วโมง</th>
+              <th style={{ minWidth: 220, borderTop: "none" }}>ช่วงเวลา</th>
+              <th style={{ minWidth: 160, borderTop: "none" }}>หลักฐาน</th>
+              <th className="text-end" style={{ width: 160, borderTop: "none" }} />
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="text-muted">
+                <td colSpan={7} className="text-muted p-4 text-center">
+                  <div className="spinner-border spinner-border-sm me-2" role="status" />
                   กำลังโหลด…
                 </td>
               </tr>
@@ -263,10 +264,10 @@ export default function ActivitiesSection({ user }) {
                   const isEdit = editingId === it.id;
                   return (
                     <tr key={it.id}>
-                      <td>
+                      <td className="fw-semibold text-dark">
                         {isEdit ? (
                           <input
-                            className="form-control"
+                            className="form-control rounded-3"
                             value={edit.title}
                             onChange={(e) =>
                               setEdit((s) => ({ ...s, title: e.target.value }))
@@ -281,7 +282,7 @@ export default function ActivitiesSection({ user }) {
                       <td>
                         {isEdit ? (
                           <select
-                            className="form-select"
+                            className="form-select rounded-3"
                             value={edit.subtype}
                             onChange={(e) =>
                               setEdit((s) => ({ ...s, subtype: e.target.value }))
@@ -295,14 +296,16 @@ export default function ActivitiesSection({ user }) {
                             ))}
                           </select>
                         ) : (
-                          it.subtype || "-"
+                          <span className="badge text-bg-light border text-dark rounded-pill">
+                            {it.subtype || "-"}
+                          </span>
                         )}
                       </td>
 
                       <td>
                         {isEdit ? (
                           <select
-                            className="form-select"
+                            className="form-select rounded-3"
                             value={edit.role}
                             onChange={(e) =>
                               setEdit((s) => ({ ...s, role: e.target.value }))
@@ -317,11 +320,10 @@ export default function ActivitiesSection({ user }) {
                           </select>
                         ) : (
                           <span
-                            className={`badge ${
-                              it.role === "staff"
+                            className={`badge rounded-pill ${it.role === "staff"
                                 ? "text-bg-primary"
                                 : "text-bg-secondary"
-                            }`}
+                              }`}
                           >
                             {ROLE_OPTIONS.find((r) => r.value === it.role)?.label ||
                               it.role ||
@@ -333,7 +335,7 @@ export default function ActivitiesSection({ user }) {
                       <td style={{ width: 120 }}>
                         {isEdit ? (
                           <input
-                            className="form-control"
+                            className="form-control rounded-3"
                             type="number"
                             min="0"
                             value={edit.hours}
@@ -351,7 +353,7 @@ export default function ActivitiesSection({ user }) {
                         {isEdit ? (
                           <div className="d-flex gap-1">
                             <input
-                              className="form-control"
+                              className="form-control rounded-3"
                               type="date"
                               value={edit.date_from}
                               onChange={(e) =>
@@ -364,7 +366,7 @@ export default function ActivitiesSection({ user }) {
                             />
                             <span className="align-self-center">~</span>
                             <input
-                              className="form-control"
+                              className="form-control rounded-3"
                               type="date"
                               value={edit.date_to}
                               onChange={(e) =>
@@ -377,14 +379,16 @@ export default function ActivitiesSection({ user }) {
                             />
                           </div>
                         ) : (
-                          `${it.date_from || "-"} ~ ${it.date_to || "-"}`
+                          <span className="text-muted small">
+                            {it.date_from || "-"} <span className="mx-1">~</span> {it.date_to || "-"}
+                          </span>
                         )}
                       </td>
 
                       <td style={{ minWidth: 160 }}>
                         {isEdit ? (
                           <input
-                            className="form-control"
+                            className="form-control rounded-3"
                             value={edit.proof_url}
                             onChange={(e) =>
                               setEdit((s) => ({
@@ -396,8 +400,8 @@ export default function ActivitiesSection({ user }) {
                             disabled={editSaving}
                           />
                         ) : it.proof_url ? (
-                          <a href={it.proof_url} target="_blank" rel="noreferrer">
-                            link
+                          <a href={it.proof_url} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline-primary rounded-pill">
+                            Link
                           </a>
                         ) : (
                           "-"
@@ -408,14 +412,14 @@ export default function ActivitiesSection({ user }) {
                         {isEdit ? (
                           <div className="btn-group btn-group-sm">
                             <button
-                              className="btn btn-primary"
+                              className="btn btn-primary rounded-start-pill"
                               onClick={() => saveEdit(it.id)}
                               disabled={editSaving}
                             >
-                              {editSaving ? "กำลังบันทึก..." : "บันทึก"}
+                              {editSaving ? "…" : "บันทึก"}
                             </button>
                             <button
-                              className="btn btn-outline-secondary"
+                              className="btn btn-outline-secondary rounded-end-pill"
                               onClick={cancelEdit}
                               disabled={editSaving}
                             >
@@ -423,20 +427,24 @@ export default function ActivitiesSection({ user }) {
                             </button>
                           </div>
                         ) : (
-                          <div className="btn-group btn-group-sm">
+                          <div className="d-flex justify-content-end gap-1">
                             <button
-                              className="btn btn-outline-secondary"
+                              className="btn btn-sm btn-light border rounded-circle shadow-sm"
                               onClick={() => startEdit(it)}
                               disabled={deletingId === it.id}
+                              title="แก้ไข"
+                              style={{ width: 32, height: 32, padding: 0 }}
                             >
-                              แก้ไข
+                              <i className="bi bi-pencil-square" />
                             </button>
                             <button
-                              className="btn btn-outline-danger"
+                              className="btn btn-sm btn-light border rounded-circle shadow-sm text-danger"
                               onClick={() => remove(it)}
                               disabled={deletingId === it.id}
+                              title="ลบ"
+                              style={{ width: 32, height: 32, padding: 0 }}
                             >
-                              {deletingId === it.id ? "กำลังลบ..." : "ลบ"}
+                              <i className="bi bi-trash" />
                             </button>
                           </div>
                         )}
@@ -446,7 +454,7 @@ export default function ActivitiesSection({ user }) {
                 })}
                 {!items.length && !loading && (
                   <tr>
-                    <td colSpan={7} className="text-muted">
+                    <td colSpan={7} className="text-muted text-center p-4">
                       ยังไม่มีรายการ
                     </td>
                   </tr>
@@ -458,97 +466,104 @@ export default function ActivitiesSection({ user }) {
       </div>
 
       {/* ✅ ฟอร์มเพิ่มรายการใหม่ */}
-      <div className="border rounded p-3">
-        <div className="row g-2">
-          <div className="col-md-4">
-            <label className="form-label">ชื่อกิจกรรม</label>
-            <input
-              className="form-control"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={adding}
-            />
-          </div>
-          <div className="col-md-3">
-            <label className="form-label">ประเภทย่อย</label>
-            <select
-              className="form-select"
-              value={subtype}
-              onChange={(e) => setSubtype(e.target.value)}
-              disabled={adding}
-            >
-              {SUBTYPE_OPTIONS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="col-md-3">
-            <label className="form-label">บทบาท</label>
-            <select
-              className="form-select"
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              disabled={adding}
-            >
-              {ROLE_OPTIONS.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="col-md-2">
-            <label className="form-label">ชั่วโมง</label>
-            <input
-              className="form-control"
-              type="number"
-              min="0"
-              value={hours}
-              onChange={(e) => setHours(e.target.value)}
-              disabled={adding}
-            />
-          </div>
-          <div className="col-md-3">
-            <label className="form-label">จากวันที่</label>
-            <input
-              className="form-control"
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              disabled={adding}
-            />
-          </div>
-          <div className="col-md-3">
-            <label className="form-label">ถึงวันที่</label>
-            <input
-              className="form-control"
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              disabled={adding}
-            />
-          </div>
-          <div className="col-md-3">
-            <label className="form-label">หลักฐาน (URL)</label>
-            <input
-              className="form-control"
-              type="url"
-              placeholder="https://..."
-              value={proof}
-              onChange={(e) => setProof(e.target.value)}
-              disabled={adding}
-            />
-          </div>
-          <div className="col-12">
-            <button
-              className="btn btn-outline-primary"
-              onClick={onAdd}
-              disabled={adding}
-            >
-              {adding ? "กำลังบันทึก..." : "เพิ่มกิจกรรม"}
-            </button>
+      {/* ✅ ฟอร์มเพิ่มรายการใหม่ */}
+      <div className="card border-0 shadow-sm rounded-4 bg-light">
+        <div className="card-body">
+          <h6 className="fw-semibold text-primary mb-3">
+            <i className="bi bi-plus-circle me-2"></i>เพิ่มกิจกรรมใหม่
+          </h6>
+          <div className="row g-2">
+            <div className="col-md-4">
+              <label className="form-label small text-muted">ชื่อกิจกรรม</label>
+              <input
+                className="form-control rounded-3 border-0"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                disabled={adding}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label small text-muted">ประเภทย่อย</label>
+              <select
+                className="form-select rounded-3 border-0"
+                value={subtype}
+                onChange={(e) => setSubtype(e.target.value)}
+                disabled={adding}
+              >
+                {SUBTYPE_OPTIONS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-md-3">
+              <label className="form-label small text-muted">บทบาท</label>
+              <select
+                className="form-select rounded-3 border-0"
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                disabled={adding}
+              >
+                {ROLE_OPTIONS.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-md-2">
+              <label className="form-label small text-muted">ชั่วโมง</label>
+              <input
+                className="form-control rounded-3 border-0"
+                type="number"
+                min="0"
+                value={hours}
+                onChange={(e) => setHours(e.target.value)}
+                disabled={adding}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label small text-muted">จากวันที่</label>
+              <input
+                className="form-control rounded-3 border-0"
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                disabled={adding}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label small text-muted">ถึงวันที่</label>
+              <input
+                className="form-control rounded-3 border-0"
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                disabled={adding}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label small text-muted">หลักฐาน (URL)</label>
+              <input
+                className="form-control rounded-3 border-0"
+                type="url"
+                placeholder="https://..."
+                value={proof}
+                onChange={(e) => setProof(e.target.value)}
+                disabled={adding}
+              />
+            </div>
+            <div className="col-md-3 d-flex align-items-end">
+              <button
+                className="btn btn-primary w-100 rounded-pill shadow-sm"
+                onClick={onAdd}
+                disabled={adding}
+                style={{ background: "linear-gradient(135deg, #0d6efd, #0a58ca)", border: "none" }}
+              >
+                {adding ? "…" : "บันทึกเพิ่ม"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
