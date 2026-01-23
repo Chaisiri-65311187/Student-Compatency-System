@@ -1078,17 +1078,11 @@ export default function StudentInfoPage() {
                               const faculty = allActs.filter(a => categorize(a) === 'faculty');
                               const elective = allActs.filter(a => categorize(a) === 'elective');
 
-                              const renderCategory = (label, icon, color, items, target) => (
+                              const renderCategory = (label, icon, color, items) => (
                                 <div className="mb-3">
                                   <div className="d-flex align-items-center gap-2 mb-2">
                                     <span style={{ fontSize: '1.1rem' }}>{icon}</span>
                                     <span className="fw-semibold" style={{ color }}>{label}</span>
-                                    <span className="badge rounded-pill" style={{ background: color, color: '#fff' }}>
-                                      {items.length} / {target}
-                                    </span>
-                                    <div className="progress flex-grow-1 ms-2" style={{ height: 6 }}>
-                                      <div className="progress-bar" style={{ width: `${Math.min(100, (items.length / target) * 100)}%`, background: color }}></div>
-                                    </div>
                                   </div>
                                   {items.length > 0 ? (
                                     <div className="d-flex flex-wrap gap-2">
@@ -1104,9 +1098,9 @@ export default function StudentInfoPage() {
 
                               return (
                                 <>
-                                  {renderCategory('กิจกรรมกลาง (มหาวิทยาลัย)', '🏛️', '#6f42c1', central, 6)}
-                                  {renderCategory('กิจกรรมคณะ', '🎓', '#0d6efd', faculty, 8)}
-                                  {renderCategory('กิจกรรมเสรี', '✨', '#20c997', elective, 4)}
+                                  {renderCategory('กิจกรรมกลาง (มหาวิทยาลัย)', '🏛️', '#6f42c1', central)}
+                                  {renderCategory('กิจกรรมคณะ', '🎓', '#0d6efd', faculty)}
+                                  {renderCategory('กิจกรรมเสรี', '✨', '#20c997', elective)}
                                 </>
                               );
                             })()}
