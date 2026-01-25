@@ -7,6 +7,30 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
+/* -------------------------------------------
+ * Multer config for training file uploads
+ * -----------------------------------------*/
+const trainingStorageDir = path.join(__dirname, "../uploads/trainings");
+if (!fs.existsSync(trainingStorageDir)) {
+  fs.mkdirSync(trainingStorageDir, { recursive: true });
+}
+
+const trainingStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, trainingStorageDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const safeName = `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+    cb(null, safeName);
+  },
+});
+const uploadTraining = multer({
+  storage: trainingStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
 
 /* -------------------------------------------
  * Utilities / Helpers
@@ -473,12 +497,20 @@ router.get("/tech/trainings/:accountId", async (req, res) => {
   const accountId = Number(req.params.accountId || 0);
   if (!accountId) return res.status(400).json({ message: "invalid accountId" });
   try {
+    // รองรับทั้งข้อมูลเดิม (มี training_id) และข้อมูลใหม่ (มี title โดยตรง)
     const [rows] = await pool.query(
-      `SELECT st.id, t.title, t.provider, t.hours, st.taken_at, st.proof_url
+      `SELECT 
+         st.id, 
+         COALESCE(st.title, t.title) AS title, 
+         t.provider, 
+         t.hours, 
+         st.taken_at, 
+         st.proof_url,
+         st.proof_file_path
        FROM student_trainings st
-       JOIN trainings t ON t.id = st.training_id
+       LEFT JOIN trainings t ON t.id = st.training_id
        WHERE st.account_id=? 
-       ORDER BY st.taken_at DESC, t.title`,
+       ORDER BY st.taken_at DESC, st.id DESC`,
       [accountId]
     );
     res.json({ items: rows });
@@ -487,6 +519,31 @@ router.get("/tech/trainings/:accountId", async (req, res) => {
       return res.json({ items: [] });
     }
     console.error("GET /tech/trainings error", e);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// POST training พร้อม file upload
+router.post("/tech/trainings", uploadTraining.single("proof_file"), async (req, res) => {
+  const { account_id, title, taken_at } = req.body || {};
+
+  if (!account_id || !title) {
+    return res.status(400).json({ message: "account_id และ title จำเป็น" });
+  }
+
+  try {
+    // เก็บ path ของไฟล์ที่อัปโหลด (ถ้ามี)
+    const proofFilePath = req.file ? `/uploads/trainings/${req.file.filename}` : null;
+
+    await pool.query(
+      `INSERT INTO student_trainings (account_id, title, taken_at, proof_file_path)
+       VALUES (?, ?, ?, ?)`,
+      [account_id, title, taken_at || null, proofFilePath]
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /tech/trainings error", e);
     res.status(500).json({ message: "Server error" });
   }
 });

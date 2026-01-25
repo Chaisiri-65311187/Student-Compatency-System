@@ -1039,11 +1039,24 @@ export default function StudentInfoPage() {
                             <div className="fw-semibold mb-2">เทคโนโลยี & อบรม</div>
                             {toArray(detail.trainings?.items || detail.trainings).length ? (
                               <ul className="list-group list-group-flush">
-                                {toArray(detail.trainings?.items || detail.trainings).map((t) => (
-                                  <li key={t.id ?? `${t.title}-${t.hours ?? "0"}`} className="list-group-item px-0">
-                                    {t.title} {t.hours ? `(${t.hours} ชม.)` : ""}
-                                  </li>
-                                ))}
+                                {toArray(detail.trainings?.items || detail.trainings).map((t) => {
+                                  const proofLink = t.proof_file_path
+                                    ? `${API_BASE}${t.proof_file_path}`
+                                    : t.proof_url;
+                                  return (
+                                    <li key={t.id ?? `${t.title}-${t.taken_at ?? "0"}`} className="list-group-item px-0 d-flex justify-content-between align-items-center">
+                                      <div>
+                                        <span className="fw-semibold">{t.title || "-"}</span>
+                                        {t.taken_at && <span className="text-muted small ms-2">{String(t.taken_at).slice(0, 10)}</span>}
+                                      </div>
+                                      {proofLink && (
+                                        <a href={proofLink} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline-primary rounded-pill">
+                                          <i className="bi bi-file-earmark me-1"></i>หลักฐาน
+                                        </a>
+                                      )}
+                                    </li>
+                                  );
+                                })}
                               </ul>
                             ) : <div className="text-muted small">ยังไม่มีข้อมูลการอบรม</div>}
                           </div>

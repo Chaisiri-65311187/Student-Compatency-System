@@ -21,10 +21,7 @@ const Toast = Swal.mixin({
 });
 
 // helpers
-const isValidUrl = (u) => {
-  if (!u) return true;
-  try { new URL(u); return true; } catch { return false; }
-};
+// ไม่ต้องใช้ isValidUrl แล้ว เพราะเปลี่ยนเป็น file upload
 const isValidPercent = (v) => {
   if (v === "" || v == null) return false;
   const n = Number(v);
@@ -36,10 +33,11 @@ export default function TechSection({ user }) {
   const [loading, setLoading] = useState(true);
 
   // ----- อบรม -----
-  const [trainingId, setTrainingId] = useState("");
+  const [trainingTitle, setTrainingTitle] = useState("");
   const [trainingDate, setTrainingDate] = useState("");
-  const [trainingProof, setTrainingProof] = useState("");
+  const [trainingFile, setTrainingFile] = useState(null);
   const [adding, setAdding] = useState(false);
+  const fileInputRef = React.useRef(null);
 
   // ----- ICT/ITPE -----
   const [ictScore, setIctScore] = useState("");
@@ -90,25 +88,25 @@ export default function TechSection({ user }) {
   }, [user?.id]);
 
   const onAddTraining = async () => {
-    if (!String(trainingId).trim()) {
-      return Swal.fire("ยังไม่กรอก training_id", "กรุณาระบุรหัสคอร์สอบรม", "warning");
-    }
-    const tid = Number(trainingId);
-    if (!Number.isInteger(tid) || tid <= 0) {
-      return Swal.fire("training_id ไม่ถูกต้อง", "ต้องเป็นเลขจำนวนเต็มมากกว่า 0", "warning");
-    }
-    if (trainingProof && !isValidUrl(trainingProof)) {
-      return Swal.fire("URL ไม่ถูกต้อง", "โปรดตรวจสอบลิงก์หลักฐาน", "warning");
+    if (!String(trainingTitle).trim()) {
+      return Swal.fire("ยังไม่กรอกชื่อ", "กรุณาระบุชื่อใบรับรอง หรือ หัวข้ออบรม", "warning");
     }
     try {
       setAdding(true);
-      await addTraining({
-        account_id: user.id,
-        training_id: tid,
-        taken_at: trainingDate || null,
-        proof_url: trainingProof || null,
-      });
-      setTrainingId(""); setTrainingDate(""); setTrainingProof("");
+
+      const formData = new FormData();
+      formData.append("account_id", user.id);
+      formData.append("title", trainingTitle.trim());
+      if (trainingDate) formData.append("taken_at", trainingDate);
+      if (trainingFile) formData.append("proof_file", trainingFile);
+
+      await addTraining(formData);
+
+      setTrainingTitle("");
+      setTrainingDate("");
+      setTrainingFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+
       await refresh();
       Toast.fire({ icon: "success", title: "เพิ่มอบรมแล้ว" });
     } catch (e) {
@@ -180,28 +178,36 @@ export default function TechSection({ user }) {
             <thead className="table-light">
               <tr>
                 <th style={{ borderTop: "none" }}>หัวข้อ</th>
-                <th style={{ borderTop: "none" }}>ผู้จัด</th>
-                <th style={{ borderTop: "none" }}>ชั่วโมง</th>
                 <th style={{ borderTop: "none" }}>วันที่</th>
                 <th style={{ borderTop: "none" }}>หลักฐาน</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} className="text-muted p-3">กำลังโหลด…</td></tr>
+                <tr><td colSpan={3} className="text-muted p-3">กำลังโหลด…</td></tr>
               ) : (
                 <>
-                  {trainings.map((t, i) => (
-                    <tr key={i}>
-                      <td className="fw-semibold text-dark">{t.title}</td>
-                      <td>{t.provider || "-"}</td>
-                      <td>{t.hours ?? "-"}</td>
-                      <td>{asDateInput(t.taken_at) || "-"}</td>
-                      <td>{t.proof_url ? <a href={t.proof_url} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline-primary rounded-pill">Link</a> : "-"}</td>
-                    </tr>
-                  ))}
+                  {trainings.map((t, i) => {
+                    // รองรับทั้ง proof_url (ข้อมูลเดิม) และ proof_file_path (ข้อมูลใหม่)
+                    const proofLink = t.proof_file_path
+                      ? `${import.meta.env?.VITE_API_BASE || 'http://localhost:3000'}${t.proof_file_path}`
+                      : t.proof_url;
+                    return (
+                      <tr key={i}>
+                        <td className="fw-semibold text-dark">{t.title || "-"}</td>
+                        <td>{asDateInput(t.taken_at) || "-"}</td>
+                        <td>
+                          {proofLink ? (
+                            <a href={proofLink} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline-primary rounded-pill">
+                              <i className="bi bi-file-earmark me-1"></i>ดูหลักฐาน
+                            </a>
+                          ) : "-"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {!trainings.length && (
-                    <tr><td colSpan={5} className="text-muted p-3 text-center">ยังไม่มีข้อมูลอบรม</td></tr>
+                    <tr><td colSpan={3} className="text-muted p-3 text-center">ยังไม่มีข้อมูลอบรม</td></tr>
                   )}
                 </>
               )}
@@ -212,30 +218,50 @@ export default function TechSection({ user }) {
         <div className="card border-0 shadow-sm rounded-4 bg-light">
           <div className="card-body">
             <div className="small text-muted mb-2">
-              <i className="bi bi-info-circle me-1"></i>
-              ต้องทราบ <b>training_id</b> จากระบบเพื่อเพิ่มข้อมูล
+              <i className="bi bi-plus-circle me-1"></i>
+              เพิ่มข้อมูลอบรม/ใบรับรอง
             </div>
             <div className="row g-2">
-              <div className="col-md-3 col-6">
-                <input className="form-control rounded-3 border-0" placeholder="training_id"
-                  value={trainingId} onChange={(e) => setTrainingId(e.target.value)}
-                  disabled={adding} />
-              </div>
-              <div className="col-md-3 col-6">
-                <input className="form-control rounded-3 border-0" type="date"
-                  value={trainingDate} onChange={(e) => setTrainingDate(e.target.value)}
-                  disabled={adding} />
-              </div>
               <div className="col-md-4 col-12">
-                <input className="form-control rounded-3 border-0" placeholder="หลักฐาน URL"
-                  value={trainingProof} onChange={(e) => setTrainingProof(e.target.value)}
-                  disabled={adding} />
+                <input
+                  className="form-control rounded-3 border-0"
+                  placeholder="ชื่อใบรับรอง หรือ หัวข้ออบรม"
+                  value={trainingTitle}
+                  onChange={(e) => setTrainingTitle(e.target.value)}
+                  disabled={adding}
+                />
+              </div>
+              <div className="col-md-2 col-6">
+                <input
+                  className="form-control rounded-3 border-0"
+                  type="date"
+                  value={trainingDate}
+                  onChange={(e) => setTrainingDate(e.target.value)}
+                  disabled={adding}
+                />
+              </div>
+              <div className="col-md-4 col-6">
+                <input
+                  ref={fileInputRef}
+                  className="form-control rounded-3 border-0"
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                  onChange={(e) => setTrainingFile(e.target.files?.[0] || null)}
+                  disabled={adding}
+                />
               </div>
               <div className="col-md-2 col-12">
-                <button className="btn btn-outline-primary w-100 rounded-pill shadow-sm" onClick={onAddTraining} disabled={adding}>
-                  {adding ? "…" : "เพิ่ม"}
+                <button
+                  className="btn btn-outline-primary w-100 rounded-pill shadow-sm"
+                  onClick={onAddTraining}
+                  disabled={adding || !trainingTitle.trim()}
+                >
+                  {adding ? "กำลังบันทึก…" : "เพิ่ม"}
                 </button>
               </div>
+            </div>
+            <div className="form-text mt-2 small">
+              รองรับไฟล์ PDF, รูปภาพ (JPG, PNG), Word (ขนาดไม่เกิน 10MB)
             </div>
           </div>
         </div>

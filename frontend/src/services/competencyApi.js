@@ -165,11 +165,23 @@ export const listTrainings = async (accountId) => {
   }
 };
 
-export const addTraining = (payload) =>
-  jsonFetch(url(`/api/competency/tech/trainings`), {
+/**
+ * เพิ่ม training ใหม่ พร้อม file upload
+ * @param {FormData} formData - ต้องมี account_id, title, taken_at (optional), proof_file (optional)
+ */
+export const addTraining = async (formData) => {
+  const res = await fetch(url(`/api/competency/tech/trainings`), {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: formData, // ไม่ต้องใส่ Content-Type, browser จะ set เอง
   });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || `Request failed: ${res.status}`);
+  }
+
+  return res.json();
+};
 
 /* ================= Activities ================= */
 export const listActivities = (accountId, cat) => {
