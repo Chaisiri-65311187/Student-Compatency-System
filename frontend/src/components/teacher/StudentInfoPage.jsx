@@ -13,7 +13,6 @@ import {
   getSavedGrades as listCourseGrades,
   peer, // ใช้สรุปผลประเมินเพื่อน/ตนเอง
 } from "../../services/competencyApi";
-import Radar5 from "../profile/Radar5";
 import {
   scoreLang,
   scoreTech,
@@ -24,6 +23,26 @@ import {
   normalizePeerScore,
   toArray,
 } from "../../utils/scoring";
+
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+  RadialLinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+} from "chart.js";
+import { Bar } from "react-chartjs-2";
+import Radar5 from "../../components/profile/Radar5";
+
+// Register ChartJS
+// ChartJS registered globally in utils/chartSetup.js
+
 
 const API_BASE = (import.meta.env?.VITE_API_BASE || "http://localhost:3000").replace(/\/+$/, "");
 const DEFAULT_AVATAR = "/src/assets/csit.jpg";
@@ -145,6 +164,9 @@ export default function StudentInfoPage() {
   const [filterDept, setFilterDept] = useState({ cs: false, it: false });
   const [filterYear, setFilterYear] = useState({ year1: false, year2: false, year3: false, year4: false });
   const [search, setSearch] = useState("");
+
+  // State for Chart Drill-down
+  const [selectedYearGraph, setSelectedYearGraph] = useState(1); // Default Year 1
 
   const toggleDept = (k) => setFilterDept((p) => ({ ...p, [k]: !p[k] }));
   const toggleYear = (k) => setFilterYear((p) => ({ ...p, [k]: !p[k] }));
@@ -403,38 +425,158 @@ export default function StudentInfoPage() {
     allDepts.forEach((dep) => {
       allYears.forEach((year) => {
         const key = `${dep}::${year}`;
-        groups[key] = { dep, year, count: 0, sum: 0, hasData: false };
+        // เพิ่มที่เก็บผลรวมรายด้าน
+        groups[key] = {
+          dep, year, count: 0, sum: 0, hasData: false,
+          sumAspects: { acad: 0, lang: 0, tech: 0, social: 0, collab: 0 }
+        };
       });
     });
 
     // รวมคะแนนตามกลุ่ม
     sorted.forEach((acc) => {
-      const score = Number(enrich[acc.id]?.total_competency);
+      const data = enrich[acc.id];
+      const score = Number(data?.total_competency);
       if (!Number.isFinite(score)) return;
       count++; sum += score;
       if (score < min) min = score;
       if (score > max) max = score;
 
       const dep = majorNameById[acc.major_id] || "";
-      const year = enrich[acc.id]?.year_level ?? acc.year_level ?? 0;
+      const year = data?.year_level ?? acc.year_level ?? 0;
       if (!allDepts.includes(dep) || !allYears.includes(year)) return;
 
       const key = `${dep}::${year}`;
-      groups[key].count += 1;
-      groups[key].sum += score;
-      groups[key].hasData = true;
+      const g = groups[key];
+      g.count += 1;
+      g.sum += score;
+      g.hasData = true;
+
+      // รวมคะแนนรายด้าน
+      if (data?.comp_each) {
+        g.sumAspects.acad += (data.comp_each.acad || 0);
+        g.sumAspects.lang += (data.comp_each.lang || 0);
+        g.sumAspects.tech += (data.comp_each.tech || 0);
+        g.sumAspects.social += (data.comp_each.social || 0);
+        g.sumAspects.collab += (data.comp_each.collab || 0);
+      }
     });
 
     const avg = count ? +(sum / count).toFixed(2) : 0;
     const groupRows = Object.values(groups)
-      .map((g) => ({
-        ...g,
-        avg: g.count ? +(g.sum / g.count).toFixed(2) : null,
-      }))
+      .map((g) => {
+        const c = g.count || 1; // avoid div by 0
+        return {
+          ...g,
+          avg: g.count ? +(g.sum / c).toFixed(2) : 0,
+          avgAspects: {
+            acad: +(g.sumAspects.acad / c).toFixed(1),
+            lang: +(g.sumAspects.lang / c).toFixed(1),
+            tech: +(g.sumAspects.tech / c).toFixed(1),
+            social: +(g.sumAspects.social / c).toFixed(1),
+            collab: +(g.sumAspects.collab / c).toFixed(1),
+          }
+        };
+      })
       .sort((a, b) => a.dep.localeCompare(b.dep, "th") || a.year - b.year);
 
     return { count, sum: Math.round(sum), min: count ? min : 0, max: count ? max : 0, avg, groups: groupRows };
   }, [sorted, enrich, majorNameById]);
+
+  /* ===== Chart Data Preparation ===== */
+  // 1. Overview Chart: Average Total Competency by Year (Grouped by Major)
+  const overviewChartData = useMemo(() => {
+    const labels = ["ปี 1", "ปี 2", "ปี 3", "ปี 4"];
+    // Extract data for CS and IT
+    const csData = labels.map((_, i) => {
+      const g = stats.groups.find(x => x.dep === "วิทยาการคอมพิวเตอร์" && x.year === (i + 1));
+      return g ? g.avg : 0;
+    });
+    const itData = labels.map((_, i) => {
+      const g = stats.groups.find(x => x.dep === "เทคโนโลยีสารสนเทศ" && x.year === (i + 1));
+      return g ? g.avg : 0;
+    });
+
+    return {
+      labels,
+      datasets: [
+        {
+          label: "วิทยาการคอมพิวเตอร์ (CS)",
+          data: csData,
+          backgroundColor: "rgba(54, 162, 235, 0.7)",
+          borderColor: "rgba(54, 162, 235, 1)",
+          borderWidth: 1,
+        },
+        {
+          label: "เทคโนโลยีสารสนเทศ (IT)",
+          data: itData,
+          backgroundColor: "rgba(255, 99, 132, 0.7)",
+          borderColor: "rgba(255, 99, 132, 1)",
+          borderWidth: 1,
+        },
+      ],
+    };
+  }, [stats]);
+
+  const overviewOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: "top" },
+      title: { display: false, text: "คะแนนเฉลี่ยรวมแยกตามชั้นปีและสาขา" },
+    },
+    scales: {
+      y: { beginAtZero: true, max: 100 },
+    },
+  };
+
+  // 2. Detail Chart: 5 Aspects Comparison for Selected Year
+  const detailChartData = useMemo(() => {
+    const aspects = ["วิชาการ", "ภาษา", "เทคโนโลยี", "สังคม", "ทำงานร่วมกัน"];
+    const y = selectedYearGraph;
+
+    const gCS = stats.groups.find(x => x.dep === "วิทยาการคอมพิวเตอร์" && x.year === y);
+    const gIT = stats.groups.find(x => x.dep === "เทคโนโลยีสารสนเทศ" && x.year === y);
+
+    const getAspectVals = (g) => [
+      g?.avgAspects?.acad || 0,
+      g?.avgAspects?.lang || 0,
+      g?.avgAspects?.tech || 0,
+      g?.avgAspects?.social || 0,
+      g?.avgAspects?.collab || 0,
+    ];
+
+    return {
+      labels: aspects,
+      datasets: [
+        {
+          label: "วิทยาการคอมพิวเตอร์ (CS)",
+          data: getAspectVals(gCS),
+          backgroundColor: "rgba(54, 162, 235, 0.7)",
+          borderColor: "rgba(54, 162, 235, 1)",
+          borderWidth: 1,
+        },
+        {
+          label: "เทคโนโลยีสารสนเทศ (IT)",
+          data: getAspectVals(gIT),
+          backgroundColor: "rgba(255, 99, 132, 0.7)",
+          borderColor: "rgba(255, 99, 132, 1)",
+          borderWidth: 1,
+        },
+      ],
+    };
+  }, [stats, selectedYearGraph]);
+
+  const detailOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: "top" },
+    },
+    scales: {
+      y: { beginAtZero: true, max: 100 },
+    },
+  };
 
   /* ======================= Modal ======================= */
   const [detailOpen, setDetailOpen] = useState(false);
@@ -730,96 +872,144 @@ export default function StudentInfoPage() {
 
             {/* ===== Summary after filters ===== */}
             {!loading && !error && (
-              <div className="card border-0 shadow-sm rounded-4 mb-3 glassy summary-card">
-                <div className="card-body">
-                  {/* Header สรุปภาพรวม */}
-                  <div className="d-flex flex-wrap align-items-center gap-2 mb-3 pb-3 border-bottom">
-                    <h6 className="mb-0 me-auto d-flex align-items-center gap-2">
-                      <i className="bi bi-bar-chart-fill text-primary" />
-                      สรุปคะแนนสมรรถนะ
-                    </h6>
-                  </div>
-
-                  {/* Stats Cards */}
-                  <div className="row g-2 mb-3">
-                    <div className="col-6 col-md-4 col-lg">
-                      <div className="stat-box bg-primary-subtle">
-                        <div className="stat-label">จำนวนนิสิต</div>
-                        <div className="stat-value text-primary">{stats.count.toLocaleString("th-TH")}</div>
-                      </div>
-                    </div>
-                    <div className="col-6 col-md-4 col-lg">
-                      <div className="stat-box bg-success-subtle">
-                        <div className="stat-label">คะแนนเฉลี่ย</div>
-                        <div className="stat-value text-success">{stats.avg || "—"}</div>
-                      </div>
-                    </div>
-                    <div className="col-6 col-md-4 col-lg">
-                      <div className="stat-box bg-info-subtle">
-                        <div className="stat-label">ผลรวมคะแนน</div>
-                        <div className="stat-value text-info">{stats.sum.toLocaleString("th-TH")}</div>
-                      </div>
-                    </div>
-                    <div className="col-6 col-md-6 col-lg">
-                      <div className="stat-box bg-warning-subtle">
-                        <div className="stat-label">ต่ำสุด</div>
-                        <div className="stat-value text-warning">{stats.count ? stats.min : "—"}</div>
-                      </div>
-                    </div>
-                    <div className="col-6 col-md-6 col-lg">
-                      <div className="stat-box bg-danger-subtle">
-                        <div className="stat-label">สูงสุด</div>
-                        <div className="stat-value text-danger">{stats.count ? stats.max : "—"}</div>
+              <>
+                {/* ===== GRAPH SECTION ===== */}
+                <div className="row mb-3">
+                  {/* Left: Overview Chart */}
+                  <div className="col-12 col-md-6 mb-3 mb-md-0">
+                    <div className="card border-0 shadow-sm rounded-4 glassy h-100">
+                      <div className="card-body d-flex flex-column">
+                        <h6 className="card-title fw-bold text-primary mb-3">
+                          <i className="bi bi-bar-chart-fill me-2" /> คะแนนเฉลี่ยรวม (ทุกด้าน)
+                        </h6>
+                        <div className="flex-grow-1" style={{ minHeight: 250 }}>
+                          <Bar data={overviewChartData} options={overviewOptions} />
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* ตารางสรุปตามสาขา/ชั้นปี */}
-                  <div className="table-responsive">
-                    <table className="table table-hover align-middle mb-0 summary-table">
-                      <thead>
-                        <tr>
-                          <th>สาขา</th>
-                          <th className="text-center" style={{ width: 90 }}>ชั้นปี</th>
-                          <th className="text-end" style={{ width: 100 }}>จำนวน</th>
-                          <th className="text-end" style={{ width: 120 }}>ผลรวม</th>
-                          <th className="text-end" style={{ width: 110 }}>เฉลี่ย</th>
-                          <th className="text-center" style={{ width: 100 }}>สถานะ</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {stats.groups.map((g) => (
-                          <tr key={`${g.dep}-${g.year}`} className={!g.hasData ? "table-light" : ""}>
-                            <td>
-                              <span className={`dept-badge ${g.dep === "วิทยาการคอมพิวเตอร์" ? "dept-cs" : "dept-it"}`}>
-                                {g.dep === "วิทยาการคอมพิวเตอร์" ? "CS" : "IT"}
-                              </span>
-                              <span className="ms-2">{g.dep}</span>
-                            </td>
-                            <td className="text-center">
-                              <span className="badge bg-secondary rounded-pill">ปี {g.year}</span>
-                            </td>
-                            <td className="text-end fw-medium">{g.hasData ? g.count.toLocaleString("th-TH") : "—"}</td>
-                            <td className="text-end">{g.hasData ? g.sum.toLocaleString("th-TH") : "—"}</td>
-                            <td className="text-end fw-semibold">{g.hasData && g.avg != null ? g.avg : "—"}</td>
-                            <td className="text-center">
-                              {g.hasData ? (
-                                <span className="badge bg-success-subtle text-success">
-                                  <i className="bi bi-check-circle me-1" />มีข้อมูล
-                                </span>
-                              ) : (
-                                <span className="badge bg-warning-subtle text-warning">
-                                  <i className="bi bi-hourglass-split me-1" />รอข้อมูล
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  {/* Right: Aspect Breakdown by Year */}
+                  <div className="col-12 col-md-6">
+                    <div className="card border-0 shadow-sm rounded-4 glassy h-100">
+                      <div className="card-body d-flex flex-column">
+                        <div className="d-flex justify-content-between align-items-center mb-3">
+                          <h6 className="card-title fw-bold text-primary mb-0">
+                            <i className="bi bi-graph-up me-2" /> เปรียบเทียบรายด้าน
+                          </h6>
+                          {/* Year Selector Buttons */}
+                          <div className="btn-group btn-group-sm" role="group">
+                            {[1, 2, 3, 4].map((y) => (
+                              <button
+                                key={y}
+                                type="button"
+                                className={`btn ${selectedYearGraph === y ? "btn-primary" : "btn-outline-primary"}`}
+                                onClick={() => setSelectedYearGraph(y)}
+                              >
+                                ปี {y}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex-grow-1" style={{ minHeight: 250 }}>
+                          <Bar data={detailChartData} options={detailOptions} />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
+
+                <div className="card border-0 shadow-sm rounded-4 mb-3 glassy summary-card">
+                  <div className="card-body">
+                    {/* Header สรุปภาพรวม */}
+                    <div className="d-flex flex-wrap align-items-center gap-2 mb-3 pb-3 border-bottom">
+                      <h6 className="mb-0 me-auto d-flex align-items-center gap-2">
+                        <i className="bi bi-bar-chart-fill text-primary" />
+                        สรุปคะแนนสมรรถนะ
+                      </h6>
+                    </div>
+
+                    {/* Stats Cards */}
+                    <div className="row g-2 mb-3">
+                      <div className="col-6 col-md-4 col-lg">
+                        <div className="stat-box bg-primary-subtle">
+                          <div className="stat-label">จำนวนนิสิต</div>
+                          <div className="stat-value text-primary">{stats.count.toLocaleString("th-TH")}</div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-4 col-lg">
+                        <div className="stat-box bg-success-subtle">
+                          <div className="stat-label">คะแนนเฉลี่ย</div>
+                          <div className="stat-value text-success">{stats.avg || "—"}</div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-4 col-lg">
+                        <div className="stat-box bg-info-subtle">
+                          <div className="stat-label">ผลรวมคะแนน</div>
+                          <div className="stat-value text-info">{stats.sum.toLocaleString("th-TH")}</div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-6 col-lg">
+                        <div className="stat-box bg-warning-subtle">
+                          <div className="stat-label">ต่ำสุด</div>
+                          <div className="stat-value text-warning">{stats.count ? stats.min : "—"}</div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-6 col-lg">
+                        <div className="stat-box bg-danger-subtle">
+                          <div className="stat-label">สูงสุด</div>
+                          <div className="stat-value text-danger">{stats.count ? stats.max : "—"}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ตารางสรุปตามสาขา/ชั้นปี */}
+                    <div className="table-responsive">
+                      <table className="table table-hover align-middle mb-0 summary-table">
+                        <thead>
+                          <tr>
+                            <th>สาขา</th>
+                            <th className="text-center" style={{ width: 90 }}>ชั้นปี</th>
+                            <th className="text-end" style={{ width: 100 }}>จำนวน</th>
+                            <th className="text-end" style={{ width: 120 }}>ผลรวม</th>
+                            <th className="text-end" style={{ width: 110 }}>เฉลี่ย</th>
+                            <th className="text-center" style={{ width: 100 }}>สถานะ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stats.groups.map((g) => (
+                            <tr key={`${g.dep}-${g.year}`} className={!g.hasData ? "table-light" : ""}>
+                              <td>
+                                <span className={`dept-badge ${g.dep === "วิทยาการคอมพิวเตอร์" ? "dept-cs" : "dept-it"}`}>
+                                  {g.dep === "วิทยาการคอมพิวเตอร์" ? "CS" : "IT"}
+                                </span>
+                                <span className="ms-2">{g.dep}</span>
+                              </td>
+                              <td className="text-center">
+                                <span className="badge bg-secondary rounded-pill">ปี {g.year}</span>
+                              </td>
+                              <td className="text-end fw-medium">{g.hasData ? g.count.toLocaleString("th-TH") : "—"}</td>
+                              <td className="text-end">{g.hasData ? g.sum.toLocaleString("th-TH") : "—"}</td>
+                              <td className="text-end fw-semibold">{g.hasData && g.avg != null ? g.avg : "—"}</td>
+                              <td className="text-center">
+                                {g.hasData ? (
+                                  <span className="badge bg-success-subtle text-success">
+                                    <i className="bi bi-check-circle me-1" />มีข้อมูล
+                                  </span>
+                                ) : (
+                                  <span className="badge bg-warning-subtle text-warning">
+                                    <i className="bi bi-hourglass-split me-1" />รอข้อมูล
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </>
             )}
 
             {/* Cards */}

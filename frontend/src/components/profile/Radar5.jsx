@@ -10,7 +10,6 @@ import {
 } from "chart.js";
 import { Radar } from "react-chartjs-2";
 
-ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
 
 /* ------------------------- helper: color → rgba ------------------------- */
 function toRgba(color, alpha = 1) {
@@ -67,7 +66,8 @@ const pointValuePlugin = {
     const ds = chart.data.datasets?.[0];
     const meta = chart.getDatasetMeta(0);
     if (!ds || !meta?.data) return;
-    const rScale = chart.scales.r;
+    const rScale = chart.scales?.r;
+    if (!rScale) return;
     const show = opts?.show ?? true;
     if (!show) return;
 
