@@ -548,6 +548,40 @@ router.post("/tech/trainings", uploadTraining.single("proof_file"), async (req, 
   }
 });
 
+// DELETE training
+router.delete("/tech/trainings/:id", async (req, res) => {
+  const id = Number(req.params.id || 0);
+  const account_id = Number(req.query.account_id || 0);
+  if (!id || !account_id) {
+    return res.status(400).json({ message: "id and account_id required" });
+  }
+  try {
+    // ดึง proof_file_path ก่อนลบ เพื่อลบไฟล์จากดิสก์ด้วย
+    const [[row]] = await pool.query(
+      `SELECT proof_file_path FROM student_trainings WHERE id=? AND account_id=?`,
+      [id, account_id]
+    );
+    if (!row) return res.status(404).json({ message: "training not found" });
+
+    await pool.query(
+      `DELETE FROM student_trainings WHERE id=? AND account_id=?`,
+      [id, account_id]
+    );
+
+    // ลบไฟล์หลักฐานออกจากดิสก์ (ถ้ามี)
+    if (row.proof_file_path) {
+      const fs = require("fs");
+      const absPath = path.join(__dirname, "..", row.proof_file_path);
+      fs.unlink(absPath, () => {}); // ไม่ต้อง throw ถ้าลบไม่ได้
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /tech/trainings error", e);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 /* -------------------------------------------
  * 6) Activities
  * -----------------------------------------*/

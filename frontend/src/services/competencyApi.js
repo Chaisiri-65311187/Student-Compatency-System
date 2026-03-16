@@ -183,6 +183,11 @@ export const addTraining = async (formData) => {
   return res.json();
 };
 
+export const deleteTraining = (id, account_id) =>
+  jsonFetch(url(`/api/competency/tech/trainings/${id}?account_id=${account_id}`), {
+    method: "DELETE",
+  });
+
 /* ================= Activities ================= */
 export const listActivities = (accountId, cat) => {
   const qs = new URLSearchParams();

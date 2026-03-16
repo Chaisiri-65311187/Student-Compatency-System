@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import {
   listTrainings,
   addTraining,
+  deleteTraining,
   getLatestLanguagesAll,
   saveLanguage,
 } from "../../services/competencyApi";
@@ -116,6 +117,27 @@ export default function TechSection({ user }) {
     }
   };
 
+  const onDeleteTraining = async (t) => {
+    const result = await Swal.fire({
+      title: "ลบข้อมูลอบรม?",
+      text: `"${t.title}" จะถูกลบออกและไม่สามารถกู้คืนได้`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#d33",
+      cancelButtonColor: "#aaa",
+      confirmButtonText: "ลบ",
+      cancelButtonText: "ยกเลิก",
+    });
+    if (!result.isConfirmed) return;
+    try {
+      await deleteTraining(t.id, user.id);
+      await refresh();
+      Toast.fire({ icon: "success", title: "ลบข้อมูลอบรมแล้ว" });
+    } catch (e) {
+      Swal.fire("ลบไม่สำเร็จ", e?.message || "กรุณาลองใหม่", "error");
+    }
+  };
+
   const saveIct = async () => {
     if (!isValidPercent(ictScore)) {
       return Swal.fire("คะแนน ICT ไม่ถูกต้อง", "กรุณาใส่ตัวเลข 0–100", "warning");
@@ -180,11 +202,12 @@ export default function TechSection({ user }) {
                 <th style={{ borderTop: "none" }}>หัวข้อ</th>
                 <th style={{ borderTop: "none" }}>วันที่</th>
                 <th style={{ borderTop: "none" }}>หลักฐาน</th>
+                <th style={{ borderTop: "none", width: "60px" }}>จัดการ</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={3} className="text-muted p-3">กำลังโหลด…</td></tr>
+                <tr><td colSpan={4} className="text-muted p-3">กำลังโหลด…</td></tr>
               ) : (
                 <>
                   {trainings.map((t, i) => {
@@ -203,11 +226,20 @@ export default function TechSection({ user }) {
                             </a>
                           ) : "-"}
                         </td>
+                        <td>
+                          <button
+                            className="btn btn-sm btn-outline-danger rounded-pill"
+                            title="ลบ"
+                            onClick={() => onDeleteTraining(t)}
+                          >
+                            <i className="bi bi-trash"></i>
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
                   {!trainings.length && (
-                    <tr><td colSpan={3} className="text-muted p-3 text-center">ยังไม่มีข้อมูลอบรม</td></tr>
+                    <tr><td colSpan={4} className="text-muted p-3 text-center">ยังไม่มีข้อมูลอบรม</td></tr>
                   )}
                 </>
               )}
